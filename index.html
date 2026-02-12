@@ -1,0 +1,73 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Offline Playlist Player</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand__dot"></div>
+        <div class="brand__text">
+          <div class="brand__title">Offline Playlist Player</div>
+          <div class="brand__subtitle">IndexedDB · Vanilla JS · Dark mode</div>
+        </div>
+      </div>
+
+      <div class="topbar__actions">
+        <button id="btnNewPlaylist" class="btn btn--primary">Nouvelle playlist</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Playlists</h2>
+        </div>
+
+        <div class="panel__body">
+          <div id="playlistList" class="list list--playlists"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel__header panel__header--stack">
+          <div class="row row--space">
+            <h2 class="panel__title">Titres</h2>
+            <div class="badge" id="activePlaylistBadge">Aucune playlist</div>
+          </div>
+
+          <div class="row row--wrap">
+            <label class="btn btn--ghost" for="fileInput">
+              Importer MP3 (1+)
+            </label>
+            <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3" multiple hidden />
+            <button id="btnPlay" class="btn btn--primary" disabled>Lecture</button>
+            <button id="btnPrev" class="btn" disabled>⟵ Précédent</button>
+            <button id="btnNext" class="btn" disabled>Suivant ⟶</button>
+          </div>
+
+          <div class="row row--space">
+            <div class="mini" id="nowPlaying">—</div>
+            <div class="mini mini--muted" id="storageInfo">—</div>
+          </div>
+        </div>
+
+        <div class="panel__body">
+          <div id="trackList" class="list list--tracks"></div>
+
+          <div class="empty" id="emptyState">
+            Sélectionnez une playlist puis importez des MP3.
+          </div>
+
+          <audio id="audio" preload="metadata"></audio>
+        </div>
+      </section>
+    </main>
+
+    <script src="./styles.js"></script>
+    <script src="./main.js"></script>
+  </body>
+</html>

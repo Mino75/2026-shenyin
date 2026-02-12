@@ -25,6 +25,37 @@
   const audioEl = $("#audio");
 
   // ---------------------------
+  // WAKELOCK 
+  // ---------------------------
+  
+  let wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {
+    // Refusé ou non autorisé (souvent si pas d'interaction user ou contraintes OS)
+  }
+}
+
+async function releaseWakeLock() {
+  try {
+    if (wakeLock) await wakeLock.release();
+  } finally {
+    wakeLock = null;
+  }
+}
+
+document.addEventListener("visibilitychange", async () => {
+  // si on redevient visible et qu'on joue encore => réacquérir
+  if (document.visibilityState === "visible" && !audioEl.paused) {
+    await acquireWakeLock();
+  }
+});
+
+  // ---------------------------
   // IndexedDB: schema & helpers
   // ---------------------------
   const DB_NAME = "offline_playlist_player";

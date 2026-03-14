@@ -1,27 +1,30 @@
 <!-- index.html -->
 <!doctype html>
-<html lang="fr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Offline Playlist Player</title>
+    <!-- viewport: width=device-width prevents iOS from zooming out on load -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0f14" />
+    <title>Shenyin</title>
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
         <div class="brand__dot"></div>
         <div class="brand__text">
-          <div class="brand__title">Offline Playlist Player</div>
-          <div class="brand__subtitle">IndexedDB · Vanilla JS · Dark mode</div>
+          <div class="brand__title">Offline Audio Player</div>
+          <div class="brand__subtitle"></div>
         </div>
       </div>
 
       <div class="topbar__actions">
-        <button id="btnNewPlaylist" class="btn btn--primary">Nouvelle playlist</button>
+        <button id="btnNewPlaylist" class="btn btn--primary">New playlist</button>
       </div>
     </header>
 
     <main class="layout">
+      <!-- Left / top panel: playlist list -->
       <section class="panel">
         <div class="panel__header">
           <h2 class="panel__title">Playlists</h2>
@@ -32,21 +35,22 @@
         </div>
       </section>
 
+      <!-- Right / bottom panel: track list + controls -->
       <section class="panel">
         <div class="panel__header panel__header--stack">
           <div class="row row--space">
-            <h2 class="panel__title">Titres</h2>
-            <div class="badge" id="activePlaylistBadge">Aucune playlist</div>
+            <h2 class="panel__title">Tracks</h2>
+            <div class="badge" id="activePlaylistBadge">No playlist</div>
           </div>
 
           <div class="row row--wrap">
             <label class="btn btn--ghost" for="fileInput">
-              Importer MP3 (1+)
+              Import MP3 (1+)
             </label>
             <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3" multiple hidden />
-            <button id="btnPlay" class="btn btn--primary" disabled>Lecture</button>
-            <button id="btnPrev" class="btn" disabled>⟵ Précédent</button>
-            <button id="btnNext" class="btn" disabled>Suivant ⟶</button>
+            <button id="btnPlay" class="btn btn--primary" disabled>Play</button>
+            <button id="btnPrev" class="btn" disabled>⟵ Prev</button>
+            <button id="btnNext" class="btn" disabled>Next ⟶</button>
           </div>
 
           <div class="row row--space">
@@ -59,7 +63,7 @@
           <div id="trackList" class="list list--tracks"></div>
 
           <div class="empty" id="emptyState">
-            Sélectionnez une playlist puis importez des MP3.
+            Select a playlist then import MP3 files.
           </div>
 
           <audio id="audio" preload="metadata"></audio>

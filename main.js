@@ -349,7 +349,7 @@ document.addEventListener("visibilitychange", async () => {
 
     activePlaylistId = p.id;
     currentIndex = -1;
-    stopPlayback();
+   await stopPlayback();
 
     renderPlaylists();
     await renderTracks();
@@ -358,7 +358,7 @@ document.addEventListener("visibilitychange", async () => {
   async function setActivePlaylist(playlistId) {
     activePlaylistId = playlistId;
     currentIndex = -1;
-    stopPlayback();
+   await stopPlayback();
 
     renderPlaylists();
     await renderTracks();
@@ -423,7 +423,7 @@ document.addEventListener("visibilitychange", async () => {
     await renderTracks();
   }
 
-  function stopPlayback() {
+  async function stopPlayback() {
     if (currentObjectUrl) {
       URL.revokeObjectURL(currentObjectUrl);
       currentObjectUrl = null;
@@ -432,6 +432,7 @@ document.addEventListener("visibilitychange", async () => {
     audioEl.removeAttribute("src");
     audioEl.load();
     nowPlayingEl.textContent = "—";
+    await releaseWakeLock();
   }
 
   async function playIndex(index) {
@@ -452,9 +453,11 @@ document.addEventListener("visibilitychange", async () => {
 
     try {
       await audioEl.play();
+      await acquireWakeLock();
     } catch {
       // autoplay bloqué : lecture déclenchée via interaction user en pratique
     }
+ 
   }
 
   async function playCurrentOrFirst() {

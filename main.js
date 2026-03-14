@@ -7,26 +7,26 @@
   // ---------------------------
   const $ = (sel) => document.querySelector(sel);
 
-  const playlistListEl    = $("#playlistList");
-  const trackListEl       = $("#trackList");
-  const emptyStateEl      = $("#emptyState");
-
-  const btnNewPlaylist    = $("#btnNewPlaylist");
-  const fileInput         = $("#fileInput");
-
-  const btnPlay           = $("#btnPlay");
-  const btnPrev           = $("#btnPrev");
-  const btnNext           = $("#btnNext");
-
-  const activePlaylistBadge = $("#activePlaylistBadge");
-  const nowPlayingEl        = $("#nowPlaying");
-  const storageInfoEl       = $("#storageInfo");
-
-  const audioEl           = $("#audio");
+  const playlistListEl        = $("#playlistList");
+  const trackListEl           = $("#trackList");
+  const emptyStateEl          = $("#emptyState");
+  const btnNewPlaylist        = $("#btnNewPlaylist");
+  const fileInput             = $("#fileInput");
+  const importPlaylistInput   = $("#importPlaylistInput");
+  const btnPlay               = $("#btnPlay");
+  const btnPrev               = $("#btnPrev");
+  const btnNext               = $("#btnNext");
+  const btnShuffle            = $("#btnShuffle");
+  const activePlaylistBadge   = $("#activePlaylistBadge");
+  const nowPlayingEl          = $("#nowPlaying");
+  const storageInfoEl         = $("#storageInfo");
+  const seekBar               = $("#seekBar");
+  const timeDisplay           = $("#timeDisplay");
+  const mediaEl               = $("#mediaEl");   // <video> — plays both audio and video
 
   // ---------------------------
   // Screen Wake Lock
-  // Keep the screen on while audio is playing (supported browsers only)
+  // Keep the screen on while media is playing (supported browsers only)
   // ---------------------------
   let wakeLock = null;
 
@@ -35,22 +35,17 @@
     try {
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } catch {
-      // Denied or not allowed (e.g. no prior user gesture, OS restriction)
-    }
+    } catch { /* denied or OS-restricted */ }
   }
 
   async function releaseWakeLock() {
-    try {
-      if (wakeLock) await wakeLock.release();
-    } finally {
-      wakeLock = null;
-    }
+    try { if (wakeLock) await wakeLock.release(); }
+    finally { wakeLock = null; }
   }
 
   // Re-acquire the wake lock when the page becomes visible again during playback
   document.addEventListener("visibilitychange", async () => {
-    if (document.visibilityState === "visible" && !audioEl.paused) {
+    if (document.visibilityState === "visible" && !mediaEl.paused) {
       await acquireWakeLock();
     }
   });
@@ -60,11 +55,7 @@
   // ---------------------------
   const DB_NAME    = "offline_playlist_player";
   const DB_VERSION = 1;
-
-  const STORES = {
-    playlists: "playlists",
-    tracks:    "tracks",
-  };
+  const STORES     = { playlists: "playlists", tracks: "tracks" };
 
   /** @type {IDBDatabase|null} */
   let db = null;
@@ -72,27 +63,20 @@
   function openDB() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-
       req.onupgradeneeded = () => {
         const d = req.result;
-
-        // playlists store: { id, name, trackIds: string[], createdAt, updatedAt }
-        if (!d.objectStoreNames.contains(STORES.playlists)) {
+        // playlists: { id, name, trackIds: string[], createdAt, updatedAt }
+        if (!d.objectStoreNames.contains(STORES.playlists))
           d.createObjectStore(STORES.playlists, { keyPath: "id" });
-        }
-
-        // tracks store: { id, title, blob, mime, createdAt, updatedAt }
-        if (!d.objectStoreNames.contains(STORES.tracks)) {
+        // tracks: { id, title, blob, mime, createdAt, updatedAt }
+        if (!d.objectStoreNames.contains(STORES.tracks))
           d.createObjectStore(STORES.tracks, { keyPath: "id" });
-        }
       };
-
       req.onsuccess = () => resolve(req.result);
-      req.onerror  = () => reject(req.error);
+      req.onerror   = () => reject(req.error);
     });
   }
 
-  /** Open a transaction and return the requested object store */
   function tx(storeName, mode = "readonly") {
     if (!db) throw new Error("DB not ready");
     return db.transaction(storeName, mode).objectStore(storeName);
@@ -122,18 +106,120 @@
     });
   }
 
+  function idbDelete(storeName, key) {
+    return new Promise((resolve, reject) => {
+      const r = tx(storeName, "readwrite").delete(key);
+      r.onsuccess = () => resolve(true);
+      r.onerror   = () => reject(r.error);
+    });
+  }
+
   // ---------------------------
   // App state
   // ---------------------------
   /** @type {{id:string, name:string, trackIds:string[], createdAt:number, updatedAt:number}[]} */
-  let playlists = [];
-
-  /** Currently selected playlist id */
+  let playlists        = [];
   let activePlaylistId = null;
-
-  /** Playback cursor */
   let currentIndex     = -1;
   let currentObjectUrl = null;
+
+  // ---------------------------
+  // Media file validation
+  // Accepts any file the browser might be able to play;
+  // actual playback errors are caught separately.
+  // ---------------------------
+  function isMediaFile(file) {
+    const mime = file.type || "";
+    if (mime.startsWith("audio/") || mime.startsWith("video/")) return true;
+    // Fallback: accept by common extension when MIME is missing
+    return /\.(mp3|mp4|m4a|m4v|ogg|ogv|wav|flac|aac|webm|opus|mov|avi|mkv|3gp)$/i.test(file.name);
+  }
+
+  // ---------------------------
+  // Blob ↔ Base64 helpers (used for playlist export / import)
+  // ---------------------------
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload  = () => resolve(r.result.split(",")[1]); // strip "data:<mime>;base64,"
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function base64ToBlob(b64, mime) {
+    const bytes = atob(b64);
+    const arr   = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    return new Blob([arr], { type: mime || "application/octet-stream" });
+  }
+
+  // ---------------------------
+  // Seek bar & time display
+  // ---------------------------
+  let isSeeking = false; // true while the user is dragging the thumb
+
+  function formatTime(s) {
+    if (!isFinite(s) || isNaN(s)) return "—";
+    const m   = Math.floor(s / 60);
+    const sec = String(Math.floor(s % 60)).padStart(2, "0");
+    return `${m}:${sec}`;
+  }
+
+  function updateSeekBar() {
+    if (isSeeking) return;
+    const dur = mediaEl.duration;
+    const cur = mediaEl.currentTime;
+    seekBar.value = isFinite(dur) && dur > 0 ? (cur / dur) * 1000 : 0;
+    timeDisplay.textContent = isFinite(dur)
+      ? `${formatTime(cur)} / ${formatTime(dur)}`
+      : formatTime(cur);
+  }
+
+  function resetSeekBar() {
+    seekBar.value           = 0;
+    seekBar.disabled        = true;
+    timeDisplay.textContent = "—";
+  }
+
+  mediaEl.addEventListener("loadedmetadata", () => {
+    seekBar.disabled = false;
+    updateSeekBar();
+  });
+
+  mediaEl.addEventListener("timeupdate", updateSeekBar);
+
+  // Preview the target time while dragging (without actually seeking yet)
+  seekBar.addEventListener("input", () => {
+    isSeeking = true;
+    const preview = (seekBar.value / 1000) * mediaEl.duration;
+    timeDisplay.textContent = `${formatTime(preview)} / ${formatTime(mediaEl.duration)}`;
+  });
+
+  // Commit the seek when the thumb is released
+  seekBar.addEventListener("change", () => {
+    if (isFinite(mediaEl.duration)) {
+      mediaEl.currentTime = (seekBar.value / 1000) * mediaEl.duration;
+    }
+    isSeeking = false;
+  });
+
+  // Handle unplayable / broken media gracefully
+  mediaEl.addEventListener("error", () => {
+    const code = mediaEl.error?.code ?? "?";
+    nowPlayingEl.textContent = `⚠️ Cannot play this file (error ${code})`;
+    resetSeekBar();
+  });
+
+  // ---------------------------
+  // Play / Pause button label sync
+  // ---------------------------
+  function updatePlayBtn() {
+    btnPlay.textContent = mediaEl.paused ? "▶️ Play" : "⏸ Pause";
+  }
+
+  mediaEl.addEventListener("play",  updatePlayBtn);
+  mediaEl.addEventListener("pause", updatePlayBtn);
 
   // ---------------------------
   // Utilities
@@ -159,23 +245,23 @@
   }
 
   function setControlsEnabled(enabled) {
-    btnPlay.disabled  = !enabled;
-    btnPrev.disabled  = !enabled;
-    btnNext.disabled  = !enabled;
-    fileInput.disabled = !activePlaylistId;
+    btnPlay.disabled    = !enabled;
+    btnPrev.disabled    = !enabled;
+    btnNext.disabled    = !enabled;
+    btnShuffle.disabled = !enabled;
+    fileInput.disabled  = !activePlaylistId;
   }
 
   function getActivePlaylist() {
-    return playlists.find((p) => p.id === activePlaylistId) ?? null;
+    return playlists.find(p => p.id === activePlaylistId) ?? null;
   }
 
   async function refreshStorageInfo() {
     try {
       if (navigator.storage?.estimate) {
         const est   = await navigator.storage.estimate();
-        const used  = bytesToHuman(est.usage ?? NaN);
-        const quota = bytesToHuman(est.quota  ?? NaN);
-        storageInfoEl.textContent = `Storage: ${used} / ${quota}`;
+        storageInfoEl.textContent =
+          `Storage: ${bytesToHuman(est.usage ?? NaN)} / ${bytesToHuman(est.quota ?? NaN)}`;
       } else {
         storageInfoEl.textContent = "Storage: estimate unavailable";
       }
@@ -202,45 +288,67 @@
     for (const p of playlists) {
       const item = document.createElement("div");
       item.className = `item ${p.id === activePlaylistId ? "item--active" : ""}`;
+      item.style.cursor = "pointer";
+      // Tap anywhere on the row to select the playlist
+      item.onclick = () => setActivePlaylist(p.id);
 
-      // Left section: name + track count
       const left = document.createElement("div");
       left.className = "item__left";
 
-      const title = document.createElement("div");
-      title.className = "item__title";
-      title.textContent = p.name;
+      // Inline-editable playlist name — tap to rename
+      const titleInput = document.createElement("input");
+      titleInput.className = "inputTitle";
+      titleInput.value = p.name;
+      titleInput.title = "Tap to rename";
+      titleInput.onclick  = (e) => e.stopPropagation(); // don't trigger row selection
+      titleInput.onkeydown = (e) => { if (e.key === "Enter") titleInput.blur(); };
+      titleInput.onblur = async () => {
+        const newName = titleInput.value.trim() || "Untitled";
+        if (newName === p.name) return;
+        await idbPut(STORES.playlists, { ...p, name: newName, updatedAt: Date.now() });
+        await loadPlaylists();
+        renderPlaylists();
+        if (activePlaylistId === p.id) activePlaylistBadge.textContent = newName;
+      };
 
       const meta = document.createElement("div");
       meta.className = "item__meta";
       meta.textContent = `${p.trackIds.length} track(s)`;
 
-      left.appendChild(title);
+      left.appendChild(titleInput);
       left.appendChild(meta);
 
-      // Action buttons
       const actions = document.createElement("div");
       actions.className = "item__actions";
 
-      const btnSelect = document.createElement("button");
-      btnSelect.className = "btn";
-      btnSelect.textContent = "Open";
-      btnSelect.onclick = () => setActivePlaylist(p.id);
+      // Export this playlist as a JSON file
+      const btnExport = document.createElement("button");
+      btnExport.className = "iconbtn";
+      btnExport.textContent = "📤";
+      btnExport.title = "Export playlist";
+      btnExport.onclick = (e) => { e.stopPropagation(); exportPlaylist(p.id); };
 
-      actions.appendChild(btnSelect);
+      // Delete playlist and all its tracks
+      const btnDel = document.createElement("button");
+      btnDel.className = "iconbtn";
+      btnDel.textContent = "🗑️";
+      btnDel.title = "Delete playlist";
+      btnDel.onclick = (e) => { e.stopPropagation(); deletePlaylist(p.id); };
 
+      actions.appendChild(btnExport);
+      actions.appendChild(btnDel);
       item.appendChild(left);
       item.appendChild(actions);
-
       playlistListEl.appendChild(item);
     }
   }
 
   async function renderTracks() {
     const p = getActivePlaylist();
-
     trackListEl.innerHTML = "";
-    nowPlayingEl.textContent = "—";
+
+    // Preserve the now-playing label during playback
+    if (mediaEl.paused) nowPlayingEl.textContent = "—";
 
     if (!p) {
       activePlaylistBadge.textContent = "No playlist";
@@ -268,18 +376,20 @@
       const row = document.createElement("div");
       row.className = "item";
 
-      // Left section: editable title + metadata
       const left = document.createElement("div");
       left.className = "item__left";
 
+      // Editable track title — saved on blur / Enter
       const titleInput = document.createElement("input");
       titleInput.className = "inputTitle";
       titleInput.value = t.title ?? "Untitled";
       titleInput.title = "Click to edit title (saved on blur)";
-      titleInput.onchange = async () => {
+      titleInput.onkeydown = (e) => { if (e.key === "Enter") titleInput.blur(); };
+      titleInput.onblur = async () => {
         const newTitle = titleInput.value.trim() || "Untitled";
+        if (newTitle === t.title) return;
         await idbPut(STORES.tracks, { ...t, title: newTitle, updatedAt: Date.now() });
-        // Reflect the new title in the now-playing indicator if this track is active
+        // Reflect in the now-playing label if this track is active
         const ap = getActivePlaylist();
         if (ap && currentIndex === i && ap.trackIds[currentIndex] === trackId) {
           nowPlayingEl.textContent = `Playing: ${newTitle}`;
@@ -288,12 +398,13 @@
 
       const meta = document.createElement("div");
       meta.className = "item__meta";
-      meta.textContent = `${t.mime || "audio/mpeg"} · ${trackId.slice(0, 8)}…`;
+      // Show media type emoji based on mime
+      const typeEmoji = (t.mime || "").startsWith("video/") ? "🎬" : "🎵";
+      meta.textContent = `${typeEmoji} ${t.mime || "unknown"} · ${trackId.slice(0, 8)}…`;
 
       left.appendChild(titleInput);
       left.appendChild(meta);
 
-      // Action buttons: reorder + play
       const actions = document.createElement("div");
       actions.className = "item__actions";
 
@@ -311,18 +422,27 @@
       btnDown.disabled = i === p.trackIds.length - 1;
       btnDown.onclick = () => moveTrack(i, +1);
 
+      // Per-track play button
       const btnPlayThis = document.createElement("button");
       btnPlayThis.className = "btn btn--primary";
-      btnPlayThis.textContent = "Play";
+      btnPlayThis.textContent = "▶️";
+      btnPlayThis.title = "Play this track";
       btnPlayThis.onclick = () => playIndex(i);
+
+      // Remove track from playlist and delete its blob from IndexedDB
+      const btnDelTrack = document.createElement("button");
+      btnDelTrack.className = "iconbtn";
+      btnDelTrack.textContent = "🗑️";
+      btnDelTrack.title = "Remove track";
+      btnDelTrack.onclick = () => removeTrackFromPlaylist(i);
 
       actions.appendChild(btnUp);
       actions.appendChild(btnDown);
       actions.appendChild(btnPlayThis);
+      actions.appendChild(btnDelTrack);
 
       row.appendChild(left);
       row.appendChild(actions);
-
       trackListEl.appendChild(row);
     }
   }
@@ -352,7 +472,7 @@
     await loadPlaylists();
 
     activePlaylistId = p.id;
-    currentIndex = -1;
+    currentIndex     = -1;
     await stopPlayback();
 
     renderPlaylists();
@@ -361,7 +481,7 @@
 
   async function setActivePlaylist(playlistId) {
     activePlaylistId = playlistId;
-    currentIndex = -1;
+    currentIndex     = -1;
     await stopPlayback();
 
     renderPlaylists();
@@ -380,12 +500,11 @@
       const track = {
         id:        uid("tr"),
         title:     baseName || "Untitled",
-        blob:      file,            // File extends Blob — safe to store in IndexedDB
-        mime:      file.type || "audio/mpeg",
+        blob:      file,                      // File extends Blob — safe for IndexedDB
+        mime:      file.type || "application/octet-stream",
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-
       await idbPut(STORES.tracks, track);
       newTrackIds.push(track.id);
     }
@@ -398,7 +517,6 @@
 
     await idbPut(STORES.playlists, updated);
     await loadPlaylists();
-
     renderPlaylists();
     await renderTracks();
     await refreshStorageInfo();
@@ -419,7 +537,7 @@
     await idbPut(STORES.playlists, updated);
     await loadPlaylists();
 
-    // Keep the playback cursor pointing at the same track after the move
+    // Keep the playback cursor on the same track after the reorder
     if      (currentIndex === index)     currentIndex = nextIndex;
     else if (currentIndex === nextIndex) currentIndex = index;
 
@@ -427,15 +545,159 @@
     await renderTracks();
   }
 
+  /** Remove a single track from the active playlist and delete its blob */
+  async function removeTrackFromPlaylist(trackIndex) {
+    const p = getActivePlaylist();
+    if (!p) return;
+
+    const trackId     = p.trackIds[trackIndex];
+    const newTrackIds = p.trackIds.filter((_, i) => i !== trackIndex);
+
+    await idbPut(STORES.playlists, { ...p, trackIds: newTrackIds, updatedAt: Date.now() });
+    await idbDelete(STORES.tracks, trackId);
+
+    // Adjust or reset the playback cursor
+    if (currentIndex === trackIndex) {
+      await stopPlayback();
+      currentIndex = -1;
+    } else if (currentIndex > trackIndex) {
+      currentIndex--;
+    }
+
+    await loadPlaylists();
+    renderPlaylists();
+    await renderTracks();
+    await refreshStorageInfo();
+  }
+
+  /** Delete a whole playlist and every track blob it owns */
+  async function deletePlaylist(playlistId) {
+    const p = playlists.find(pl => pl.id === playlistId);
+    if (!p) return;
+    if (!confirm(`Delete playlist "${p.name}" and all its tracks?`)) return;
+
+    for (const trackId of p.trackIds) await idbDelete(STORES.tracks, trackId);
+    await idbDelete(STORES.playlists, playlistId);
+
+    if (activePlaylistId === playlistId) {
+      activePlaylistId = null;
+      currentIndex     = -1;
+      await stopPlayback();
+    }
+
+    await loadPlaylists();
+    renderPlaylists();
+    await renderTracks();
+    await refreshStorageInfo();
+  }
+
+  // ---------------------------
+  // Playlist export / import
+  // Each track blob is serialised to Base64 so the JSON is self-contained.
+  // Warning: large playlists produce large files.
+  // ---------------------------
+
+  async function exportPlaylist(playlistId) {
+    const p = playlists.find(pl => pl.id === playlistId);
+    if (!p) return;
+
+    nowPlayingEl.textContent = "⏳ Exporting…";
+
+    try {
+      const tracks = [];
+      for (const trackId of p.trackIds) {
+        const t = await idbGet(STORES.tracks, trackId);
+        if (!t) continue;
+        const data = await blobToBase64(t.blob);
+        tracks.push({ title: t.title, mime: t.mime, data });
+      }
+
+      const payload = JSON.stringify({
+        version:  1,
+        playlist: { name: p.name, createdAt: p.createdAt },
+        tracks,
+      });
+
+      const blob = new Blob([payload], { type: "application/json" });
+      const url  = URL.createObjectURL(blob);
+      const a    = Object.assign(document.createElement("a"), {
+        href:     url,
+        download: `${p.name.replace(/[^a-z0-9]/gi, "_")}_playlist.json`,
+      });
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      // Restore the now-playing label
+      nowPlayingEl.textContent = mediaEl.paused ? "—" : nowPlayingEl.textContent;
+    }
+  }
+
+  async function importPlaylistFromFile(file) {
+    nowPlayingEl.textContent = "⏳ Importing…";
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (data.version !== 1 || !data.playlist || !Array.isArray(data.tracks)) {
+        alert("Invalid playlist file. Only files exported by this app are supported.");
+        return;
+      }
+
+      const newTrackIds = [];
+      for (const track of data.tracks) {
+        const blob  = base64ToBlob(track.data, track.mime);
+        const newId = uid("tr");
+        await idbPut(STORES.tracks, {
+          id:        newId,
+          title:     track.title || "Untitled",
+          blob,
+          mime:      track.mime || "application/octet-stream",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        newTrackIds.push(newId);
+      }
+
+      const newPlaylist = {
+        id:        uid("pl"),
+        name:      data.playlist.name || "Imported Playlist",
+        trackIds:  newTrackIds,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      await idbPut(STORES.playlists, newPlaylist);
+      await loadPlaylists();
+
+      activePlaylistId = newPlaylist.id;
+      currentIndex     = -1;
+
+      renderPlaylists();
+      await renderTracks();
+      await refreshStorageInfo();
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    } finally {
+      nowPlayingEl.textContent = mediaEl.paused ? "—" : nowPlayingEl.textContent;
+    }
+  }
+
+  // ---------------------------
+  // Playback
+  // ---------------------------
   async function stopPlayback() {
     if (currentObjectUrl) {
       URL.revokeObjectURL(currentObjectUrl);
       currentObjectUrl = null;
     }
-    audioEl.pause();
-    audioEl.removeAttribute("src");
-    audioEl.load();
+    mediaEl.pause();
+    mediaEl.removeAttribute("src");
+    mediaEl.load();
+    mediaEl.classList.remove("visible"); // hide video viewport
     nowPlayingEl.textContent = "—";
+    resetSeekBar();
     await releaseWakeLock();
   }
 
@@ -452,23 +714,44 @@
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(t.blob);
 
-    audioEl.src = currentObjectUrl;
+    mediaEl.src = currentObjectUrl;
+
+    // Show the video viewport only for video content
+    const isVideo = (t.mime || "").startsWith("video/");
+    mediaEl.classList.toggle("visible", isVideo);
+
     nowPlayingEl.textContent = `Playing: ${t.title ?? "Untitled"}`;
 
     try {
-      await audioEl.play();
+      await mediaEl.play();
       await acquireWakeLock();
-    } catch {
-      // Autoplay blocked — playback will start on the next user interaction
-    }
+    } catch { /* autoplay blocked — user will trigger play manually */ }
   }
 
   async function playCurrentOrFirst() {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
 
+    // Resume a paused track without restarting it
+    if (currentIndex >= 0 && mediaEl.src && mediaEl.paused) {
+      try {
+        await mediaEl.play();
+        await acquireWakeLock();
+        return;
+      } catch { /* fall through to full playIndex */ }
+    }
+
     if (currentIndex < 0) currentIndex = 0;
     await playIndex(currentIndex);
+  }
+
+  async function togglePlayPause() {
+    if (!mediaEl.paused) {
+      mediaEl.pause();
+      await releaseWakeLock();
+    } else {
+      await playCurrentOrFirst();
+    }
   }
 
   async function nextTrack() {
@@ -476,7 +759,7 @@
     if (!p || p.trackIds.length === 0) return;
 
     const next = currentIndex < 0 ? 0 : currentIndex + 1;
-    if (next >= p.trackIds.length) return; // end of playlist — stop intentionally
+    if (next >= p.trackIds.length) return; // end of playlist — intentional stop
     await playIndex(next);
   }
 
@@ -488,6 +771,19 @@
     await playIndex(prev);
   }
 
+  /** Pick a random track, always different from the currently playing one */
+  async function shuffleTrack() {
+    const p = getActivePlaylist();
+    if (!p || p.trackIds.length === 0) return;
+    if (p.trackIds.length === 1) { await playIndex(0); return; }
+
+    let idx;
+    do { idx = Math.floor(Math.random() * p.trackIds.length); }
+    while (idx === currentIndex);
+
+    await playIndex(idx);
+  }
+
   // ---------------------------
   // Event wiring
   // ---------------------------
@@ -495,32 +791,40 @@
 
   fileInput.addEventListener("change", async () => {
     const files = Array.from(fileInput.files || []);
-    fileInput.value = ""; // reset so the same file can be re-imported
+    fileInput.value = ""; // reset so the same file can be re-added
     if (files.length === 0) return;
 
-    // Filter to MP3 only (extend here for other audio formats if needed)
-    const mp3s = files.filter(
-      (f) => (f.type || "").includes("mpeg") || /\.mp3$/i.test(f.name)
-    );
-    if (mp3s.length === 0) {
-      alert("No MP3 files detected in the selection.");
+    const media = files.filter(isMediaFile);
+    const skipped = files.length - media.length;
+
+    if (media.length === 0) {
+      alert("No recognisable media files found in the selection.");
       return;
     }
+    if (skipped > 0) {
+      alert(`${skipped} file(s) were skipped (unrecognised format). ${media.length} added.`);
+    }
 
-    await importFilesToActivePlaylist(mp3s);
+    await importFilesToActivePlaylist(media);
   });
 
-  btnPlay.addEventListener("click", playCurrentOrFirst);
-  btnNext.addEventListener("click", nextTrack);
-  btnPrev.addEventListener("click", prevTrack);
+  importPlaylistInput.addEventListener("change", async () => {
+    const file = importPlaylistInput.files?.[0];
+    importPlaylistInput.value = "";
+    if (!file) return;
+    await importPlaylistFromFile(file);
+  });
+
+  btnPlay.addEventListener("click",    togglePlayPause);
+  btnNext.addEventListener("click",    nextTrack);
+  btnPrev.addEventListener("click",    prevTrack);
+  btnShuffle.addEventListener("click", shuffleTrack);
 
   // Auto-advance to the next track when the current one ends
-  audioEl.addEventListener("ended", async () => {
+  mediaEl.addEventListener("ended", async () => {
     const p = getActivePlaylist();
     if (!p) return;
-    if (currentIndex + 1 < p.trackIds.length) {
-      await playIndex(currentIndex + 1);
-    }
+    if (currentIndex + 1 < p.trackIds.length) await playIndex(currentIndex + 1);
   });
 
   // Clean up the object URL when the page is unloaded
@@ -533,14 +837,11 @@
   // ---------------------------
   (async function init() {
     db = await openDB();
-
     await loadPlaylists();
     renderPlaylists();
 
     // Auto-select the most recently updated playlist on startup
-    if (playlists.length > 0) {
-      activePlaylistId = playlists[0].id;
-    }
+    if (playlists.length > 0) activePlaylistId = playlists[0].id;
 
     await renderTracks();
     await refreshStorageInfo();

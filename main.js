@@ -3,67 +3,67 @@
   "use strict";
 
   // ---------------------------
-  // DOM
+  // DOM references
   // ---------------------------
   const $ = (sel) => document.querySelector(sel);
 
-  const playlistListEl = $("#playlistList");
-  const trackListEl = $("#trackList");
-  const emptyStateEl = $("#emptyState");
+  const playlistListEl    = $("#playlistList");
+  const trackListEl       = $("#trackList");
+  const emptyStateEl      = $("#emptyState");
 
-  const btnNewPlaylist = $("#btnNewPlaylist");
-  const fileInput = $("#fileInput");
+  const btnNewPlaylist    = $("#btnNewPlaylist");
+  const fileInput         = $("#fileInput");
 
-  const btnPlay = $("#btnPlay");
-  const btnPrev = $("#btnPrev");
-  const btnNext = $("#btnNext");
+  const btnPlay           = $("#btnPlay");
+  const btnPrev           = $("#btnPrev");
+  const btnNext           = $("#btnNext");
 
   const activePlaylistBadge = $("#activePlaylistBadge");
-  const nowPlayingEl = $("#nowPlaying");
-  const storageInfoEl = $("#storageInfo");
+  const nowPlayingEl        = $("#nowPlaying");
+  const storageInfoEl       = $("#storageInfo");
 
-  const audioEl = $("#audio");
+  const audioEl           = $("#audio");
 
   // ---------------------------
-  // WAKELOCK 
+  // Screen Wake Lock
+  // Keep the screen on while audio is playing (supported browsers only)
   // ---------------------------
-  
   let wakeLock = null;
 
-async function acquireWakeLock() {
-  if (!("wakeLock" in navigator)) return;
-  try {
-    wakeLock = await navigator.wakeLock.request("screen");
-    wakeLock.addEventListener("release", () => { wakeLock = null; });
-  } catch {
-    // Refusé ou non autorisé (souvent si pas d'interaction user ou contraintes OS)
+  async function acquireWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } catch {
+      // Denied or not allowed (e.g. no prior user gesture, OS restriction)
+    }
   }
-}
 
-async function releaseWakeLock() {
-  try {
-    if (wakeLock) await wakeLock.release();
-  } finally {
-    wakeLock = null;
+  async function releaseWakeLock() {
+    try {
+      if (wakeLock) await wakeLock.release();
+    } finally {
+      wakeLock = null;
+    }
   }
-}
 
-document.addEventListener("visibilitychange", async () => {
-  // si on redevient visible et qu'on joue encore => réacquérir
-  if (document.visibilityState === "visible" && !audioEl.paused) {
-    await acquireWakeLock();
-  }
-});
+  // Re-acquire the wake lock when the page becomes visible again during playback
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState === "visible" && !audioEl.paused) {
+      await acquireWakeLock();
+    }
+  });
 
   // ---------------------------
-  // IndexedDB: schema & helpers
+  // IndexedDB — schema & helpers
   // ---------------------------
-  const DB_NAME = "offline_playlist_player";
+  const DB_NAME    = "offline_playlist_player";
   const DB_VERSION = 1;
 
   const STORES = {
     playlists: "playlists",
-    tracks: "tracks",
+    tracks:    "tracks",
   };
 
   /** @type {IDBDatabase|null} */
@@ -76,22 +76,23 @@ document.addEventListener("visibilitychange", async () => {
       req.onupgradeneeded = () => {
         const d = req.result;
 
-        // Playlists: { id, name, trackIds: string[], createdAt, updatedAt }
+        // playlists store: { id, name, trackIds: string[], createdAt, updatedAt }
         if (!d.objectStoreNames.contains(STORES.playlists)) {
           d.createObjectStore(STORES.playlists, { keyPath: "id" });
         }
 
-        // Tracks: { id, title, blob, mime, createdAt, updatedAt }
+        // tracks store: { id, title, blob, mime, createdAt, updatedAt }
         if (!d.objectStoreNames.contains(STORES.tracks)) {
           d.createObjectStore(STORES.tracks, { keyPath: "id" });
         }
       };
 
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onerror  = () => reject(req.error);
     });
   }
 
+  /** Open a transaction and return the requested object store */
   function tx(storeName, mode = "readonly") {
     if (!db) throw new Error("DB not ready");
     return db.transaction(storeName, mode).objectStore(storeName);
@@ -101,7 +102,7 @@ document.addEventListener("visibilitychange", async () => {
     return new Promise((resolve, reject) => {
       const r = tx(storeName).get(key);
       r.onsuccess = () => resolve(r.result ?? null);
-      r.onerror = () => reject(r.error);
+      r.onerror   = () => reject(r.error);
     });
   }
 
@@ -109,7 +110,7 @@ document.addEventListener("visibilitychange", async () => {
     return new Promise((resolve, reject) => {
       const r = tx(storeName).getAll();
       r.onsuccess = () => resolve(r.result ?? []);
-      r.onerror = () => reject(r.error);
+      r.onerror   = () => reject(r.error);
     });
   }
 
@@ -117,21 +118,21 @@ document.addEventListener("visibilitychange", async () => {
     return new Promise((resolve, reject) => {
       const r = tx(storeName, "readwrite").put(value);
       r.onsuccess = () => resolve(true);
-      r.onerror = () => reject(r.error);
+      r.onerror   = () => reject(r.error);
     });
   }
 
   // ---------------------------
   // App state
   // ---------------------------
-  /** @type {{id:string,name:string,trackIds:string[],createdAt:number,updatedAt:number}[]} */
+  /** @type {{id:string, name:string, trackIds:string[], createdAt:number, updatedAt:number}[]} */
   let playlists = [];
 
-  /** Active playlist id */
+  /** Currently selected playlist id */
   let activePlaylistId = null;
 
-  /** Playback */
-  let currentIndex = -1;
+  /** Playback cursor */
+  let currentIndex     = -1;
   let currentObjectUrl = null;
 
   // ---------------------------
@@ -148,12 +149,8 @@ document.addEventListener("visibilitychange", async () => {
   function bytesToHuman(bytes) {
     if (!Number.isFinite(bytes)) return "—";
     const units = ["B", "KB", "MB", "GB", "TB"];
-    let i = 0;
-    let v = bytes;
-    while (v >= 1024 && i < units.length - 1) {
-      v /= 1024;
-      i++;
-    }
+    let i = 0, v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
     return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
@@ -162,9 +159,9 @@ document.addEventListener("visibilitychange", async () => {
   }
 
   function setControlsEnabled(enabled) {
-    btnPlay.disabled = !enabled;
-    btnPrev.disabled = !enabled;
-    btnNext.disabled = !enabled;
+    btnPlay.disabled  = !enabled;
+    btnPrev.disabled  = !enabled;
+    btnNext.disabled  = !enabled;
     fileInput.disabled = !activePlaylistId;
   }
 
@@ -175,15 +172,15 @@ document.addEventListener("visibilitychange", async () => {
   async function refreshStorageInfo() {
     try {
       if (navigator.storage?.estimate) {
-        const est = await navigator.storage.estimate();
-        const used = bytesToHuman(est.usage ?? NaN);
-        const quota = bytesToHuman(est.quota ?? NaN);
-        storageInfoEl.textContent = `Stockage: ${used} / ${quota}`;
+        const est   = await navigator.storage.estimate();
+        const used  = bytesToHuman(est.usage ?? NaN);
+        const quota = bytesToHuman(est.quota  ?? NaN);
+        storageInfoEl.textContent = `Storage: ${used} / ${quota}`;
       } else {
-        storageInfoEl.textContent = "Stockage: estimation indisponible";
+        storageInfoEl.textContent = "Storage: estimate unavailable";
       }
     } catch {
-      storageInfoEl.textContent = "Stockage: estimation indisponible";
+      storageInfoEl.textContent = "Storage: estimate unavailable";
     }
   }
 
@@ -197,7 +194,7 @@ document.addEventListener("visibilitychange", async () => {
       const div = document.createElement("div");
       div.className = "empty";
       div.style.display = "block";
-      div.textContent = "Aucune playlist. Créez-en une pour démarrer.";
+      div.textContent = "No playlists. Create one to get started.";
       playlistListEl.appendChild(div);
       return;
     }
@@ -206,6 +203,7 @@ document.addEventListener("visibilitychange", async () => {
       const item = document.createElement("div");
       item.className = `item ${p.id === activePlaylistId ? "item--active" : ""}`;
 
+      // Left section: name + track count
       const left = document.createElement("div");
       left.className = "item__left";
 
@@ -215,17 +213,18 @@ document.addEventListener("visibilitychange", async () => {
 
       const meta = document.createElement("div");
       meta.className = "item__meta";
-      meta.textContent = `${p.trackIds.length} titre(s)`;
+      meta.textContent = `${p.trackIds.length} track(s)`;
 
       left.appendChild(title);
       left.appendChild(meta);
 
+      // Action buttons
       const actions = document.createElement("div");
       actions.className = "item__actions";
 
       const btnSelect = document.createElement("button");
       btnSelect.className = "btn";
-      btnSelect.textContent = "Ouvrir";
+      btnSelect.textContent = "Open";
       btnSelect.onclick = () => setActivePlaylist(p.id);
 
       actions.appendChild(btnSelect);
@@ -244,7 +243,7 @@ document.addEventListener("visibilitychange", async () => {
     nowPlayingEl.textContent = "—";
 
     if (!p) {
-      activePlaylistBadge.textContent = "Aucune playlist";
+      activePlaylistBadge.textContent = "No playlist";
       setEmptyState(true);
       setControlsEnabled(false);
       return;
@@ -269,20 +268,21 @@ document.addEventListener("visibilitychange", async () => {
       const row = document.createElement("div");
       row.className = "item";
 
+      // Left section: editable title + metadata
       const left = document.createElement("div");
       left.className = "item__left";
 
       const titleInput = document.createElement("input");
       titleInput.className = "inputTitle";
-      titleInput.value = t.title ?? "Sans titre";
-      titleInput.title = "Modifier le titre (valide à la sortie du champ)";
+      titleInput.value = t.title ?? "Untitled";
+      titleInput.title = "Click to edit title (saved on blur)";
       titleInput.onchange = async () => {
-        const newTitle = titleInput.value.trim() || "Sans titre";
+        const newTitle = titleInput.value.trim() || "Untitled";
         await idbPut(STORES.tracks, { ...t, title: newTitle, updatedAt: Date.now() });
-        // Optionnel: refléter immédiatement le nowPlaying si nécessaire
+        // Reflect the new title in the now-playing indicator if this track is active
         const ap = getActivePlaylist();
         if (ap && currentIndex === i && ap.trackIds[currentIndex] === trackId) {
-          nowPlayingEl.textContent = `Lecture: ${newTitle}`;
+          nowPlayingEl.textContent = `Playing: ${newTitle}`;
         }
       };
 
@@ -293,24 +293,27 @@ document.addEventListener("visibilitychange", async () => {
       left.appendChild(titleInput);
       left.appendChild(meta);
 
+      // Action buttons: reorder + play
       const actions = document.createElement("div");
       actions.className = "item__actions";
 
       const btnUp = document.createElement("button");
       btnUp.className = "iconbtn";
       btnUp.textContent = "↑";
+      btnUp.title = "Move up";
       btnUp.disabled = i === 0;
       btnUp.onclick = () => moveTrack(i, -1);
 
       const btnDown = document.createElement("button");
       btnDown.className = "iconbtn";
       btnDown.textContent = "↓";
+      btnDown.title = "Move down";
       btnDown.disabled = i === p.trackIds.length - 1;
       btnDown.onclick = () => moveTrack(i, +1);
 
       const btnPlayThis = document.createElement("button");
       btnPlayThis.className = "btn btn--primary";
-      btnPlayThis.textContent = "Lire";
+      btnPlayThis.textContent = "Play";
       btnPlayThis.onclick = () => playIndex(i);
 
       actions.appendChild(btnUp);
@@ -329,17 +332,18 @@ document.addEventListener("visibilitychange", async () => {
   // ---------------------------
   async function loadPlaylists() {
     playlists = await idbGetAll(STORES.playlists);
+    // Most recently updated playlist first
     playlists.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
   async function createPlaylist() {
-    const name = prompt("Nom de la playlist ?", `Playlist ${playlists.length + 1}`);
+    const name = prompt("Playlist name?", `Playlist ${playlists.length + 1}`);
     if (!name) return;
 
     const p = {
-      id: uid("pl"),
-      name: name.trim() || "Sans nom",
-      trackIds: [],
+      id:        uid("pl"),
+      name:      name.trim() || "Untitled",
+      trackIds:  [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -349,7 +353,7 @@ document.addEventListener("visibilitychange", async () => {
 
     activePlaylistId = p.id;
     currentIndex = -1;
-   await stopPlayback();
+    await stopPlayback();
 
     renderPlaylists();
     await renderTracks();
@@ -358,7 +362,7 @@ document.addEventListener("visibilitychange", async () => {
   async function setActivePlaylist(playlistId) {
     activePlaylistId = playlistId;
     currentIndex = -1;
-   await stopPlayback();
+    await stopPlayback();
 
     renderPlaylists();
     await renderTracks();
@@ -371,13 +375,13 @@ document.addEventListener("visibilitychange", async () => {
     const newTrackIds = [];
 
     for (const file of files) {
-      // Nom initial = nom de fichier (sans extension), éditable ensuite
-      const baseName = (file.name || "Sans titre").replace(/\.[^/.]+$/, "");
+      // Use the filename (without extension) as the default title
+      const baseName = (file.name || "Untitled").replace(/\.[^/.]+$/, "");
       const track = {
-        id: uid("tr"),
-        title: baseName || "Sans titre",
-        blob: file, // File est un Blob => stockable
-        mime: file.type || "audio/mpeg",
+        id:        uid("tr"),
+        title:     baseName || "Untitled",
+        blob:      file,            // File extends Blob — safe to store in IndexedDB
+        mime:      file.type || "audio/mpeg",
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -388,7 +392,7 @@ document.addEventListener("visibilitychange", async () => {
 
     const updated = {
       ...p,
-      trackIds: [...p.trackIds, ...newTrackIds],
+      trackIds:  [...p.trackIds, ...newTrackIds],
       updatedAt: Date.now(),
     };
 
@@ -415,8 +419,8 @@ document.addEventListener("visibilitychange", async () => {
     await idbPut(STORES.playlists, updated);
     await loadPlaylists();
 
-    // Ajuster l’index de lecture si on déplace l’élément en cours
-    if (currentIndex === index) currentIndex = nextIndex;
+    // Keep the playback cursor pointing at the same track after the move
+    if      (currentIndex === index)     currentIndex = nextIndex;
     else if (currentIndex === nextIndex) currentIndex = index;
 
     renderPlaylists();
@@ -444,20 +448,19 @@ document.addEventListener("visibilitychange", async () => {
     const t = await idbGet(STORES.tracks, trackId);
     if (!t) return;
 
-    // Nettoyage précédent objectURL
+    // Revoke the previous object URL to free memory
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(t.blob);
 
     audioEl.src = currentObjectUrl;
-    nowPlayingEl.textContent = `Lecture: ${t.title ?? "Sans titre"}`;
+    nowPlayingEl.textContent = `Playing: ${t.title ?? "Untitled"}`;
 
     try {
       await audioEl.play();
       await acquireWakeLock();
     } catch {
-      // autoplay bloqué : lecture déclenchée via interaction user en pratique
+      // Autoplay blocked — playback will start on the next user interaction
     }
- 
   }
 
   async function playCurrentOrFirst() {
@@ -472,8 +475,8 @@ document.addEventListener("visibilitychange", async () => {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
 
-    const next = (currentIndex < 0) ? 0 : (currentIndex + 1);
-    if (next >= p.trackIds.length) return; // fin de playlist (volontairement strict)
+    const next = currentIndex < 0 ? 0 : currentIndex + 1;
+    if (next >= p.trackIds.length) return; // end of playlist — stop intentionally
     await playIndex(next);
   }
 
@@ -481,24 +484,26 @@ document.addEventListener("visibilitychange", async () => {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
 
-    const prev = (currentIndex <= 0) ? 0 : (currentIndex - 1);
+    const prev = currentIndex <= 0 ? 0 : currentIndex - 1;
     await playIndex(prev);
   }
 
   // ---------------------------
-  // Wiring
+  // Event wiring
   // ---------------------------
   btnNewPlaylist.addEventListener("click", createPlaylist);
 
   fileInput.addEventListener("change", async () => {
     const files = Array.from(fileInput.files || []);
-    fileInput.value = "";
+    fileInput.value = ""; // reset so the same file can be re-imported
     if (files.length === 0) return;
 
-    // Filtrage minimal (vous pouvez élargir à d’autres formats audio)
-    const mp3s = files.filter((f) => (f.type || "").includes("mpeg") || /\.mp3$/i.test(f.name));
+    // Filter to MP3 only (extend here for other audio formats if needed)
+    const mp3s = files.filter(
+      (f) => (f.type || "").includes("mpeg") || /\.mp3$/i.test(f.name)
+    );
     if (mp3s.length === 0) {
-      alert("Aucun MP3 détecté dans la sélection.");
+      alert("No MP3 files detected in the selection.");
       return;
     }
 
@@ -509,8 +514,8 @@ document.addEventListener("visibilitychange", async () => {
   btnNext.addEventListener("click", nextTrack);
   btnPrev.addEventListener("click", prevTrack);
 
+  // Auto-advance to the next track when the current one ends
   audioEl.addEventListener("ended", async () => {
-    // Lecture séquentielle: auto-next jusqu’à la fin
     const p = getActivePlaylist();
     if (!p) return;
     if (currentIndex + 1 < p.trackIds.length) {
@@ -518,6 +523,7 @@ document.addEventListener("visibilitychange", async () => {
     }
   });
 
+  // Clean up the object URL when the page is unloaded
   window.addEventListener("beforeunload", () => {
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   });
@@ -531,7 +537,7 @@ document.addEventListener("visibilitychange", async () => {
     await loadPlaylists();
     renderPlaylists();
 
-    // Auto-sélection de la playlist la plus récente
+    // Auto-select the most recently updated playlist on startup
     if (playlists.length > 0) {
       activePlaylistId = playlists[0].id;
     }

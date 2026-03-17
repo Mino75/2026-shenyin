@@ -7,6 +7,69 @@
     <meta name="theme-color" content="#0b0f14" />
     <link rel="manifest" href="./manifest.json">
     <title>Shenyin</title>
+
+    <!-- ── PLAYER BAR OVERRIDES (added) ────────────────────────────── -->
+    <style>
+      /* Push page content above the fixed bar */
+      main.layout { padding-bottom: 148px; }
+
+      /* Fixed bottom player bar */
+      .player-bar {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        z-index: 200;
+        background: #0b0f14;
+        border-top: 1px solid rgba(255,255,255,.1);
+        padding: 8px 12px;
+        /* Respect iOS / Android safe-area (notch, gesture bar) */
+        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      /* Now-playing + storage row inside the bar */
+      .player-bar .mini-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      /* Seek row */
+      .player-bar .seek-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+      }
+      .player-bar .seekbar { flex: 1; }
+
+      /* Big transport buttons */
+      .player-bar .transport {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .player-bar .transport .btn {
+        min-height: 52px;
+        min-width: 72px;
+        font-size: 1.15rem;
+        padding: 10px 16px;
+        flex: 1 1 auto;
+        max-width: 130px;
+      }
+      /* "Add media" label stays smaller / ghost — it's a utility, not transport */
+      .player-bar .btn--add {
+        min-height: 40px;
+        min-width: unset;
+        font-size: .9rem;
+        padding: 6px 12px;
+        flex: 0 0 auto;
+        max-width: unset;
+      }
+    </style>
+    <!-- ────────────────────────────────────────────────────────────── -->
   </head>
   <body>
     <header class="topbar">
@@ -35,34 +98,17 @@
         </div>
       </section>
 
-      <!-- Right / bottom panel: track list + controls -->
+      <!-- Right / bottom panel: track list -->
       <section class="panel">
         <div class="panel__header panel__header--stack">
           <div class="row row--space">
             <h2 class="panel__title">Tracks</h2>
             <div class="badge" id="activePlaylistBadge">No playlist</div>
           </div>
-
+          <!-- "Add media" stays here, transport controls moved to player-bar -->
           <div class="row row--wrap">
             <label class="btn btn--ghost" for="fileInput">📁 Add media</label>
-            <!-- Accept any audio or video the browser can attempt to play -->
             <input id="fileInput" type="file" accept="audio/*,video/*" multiple hidden />
-            <button id="btnPlay"    class="btn btn--primary" disabled>▶️ Play</button>
-            <button id="btnPrev"    class="btn" disabled>⏮ Prev</button>
-            <button id="btnNext"    class="btn" disabled>Next ⏭</button>
-            <button id="btnShuffle" class="btn" disabled>🔀 Random</button>
-          </div>
-
-          <!-- Seek bar + time display -->
-          <div class="seek-row">
-            <input type="range" id="seekBar" class="seekbar"
-                   min="0" max="1000" value="0" step="1" disabled />
-            <span id="timeDisplay" class="time-display">—</span>
-          </div>
-
-          <div class="row row--space">
-            <div class="mini" id="nowPlaying">—</div>
-            <div class="mini mini--muted" id="storageInfo">—</div>
           </div>
         </div>
 
@@ -75,6 +121,32 @@
         </div>
       </section>
     </main>
+
+    <!-- ── FIXED BOTTOM PLAYER BAR (added) ─────────────────────────── -->
+    <div class="player-bar" id="playerBar">
+
+      <!-- Now-playing + storage -->
+      <div class="mini-row">
+        <div class="mini" id="nowPlaying">—</div>
+        <div class="mini mini--muted" id="storageInfo">—</div>
+      </div>
+
+      <!-- Seek bar + time -->
+      <div class="seek-row">
+        <input type="range" id="seekBar" class="seekbar"
+               min="0" max="1000" value="0" step="1" disabled />
+        <span id="timeDisplay" class="time-display">—</span>
+      </div>
+
+      <!-- Transport buttons -->
+      <div class="transport">
+        <button id="btnPrev"    class="btn"          disabled>⏮ Prev</button>
+        <button id="btnPlay"    class="btn btn--primary" disabled>▶️ Play</button>
+        <button id="btnNext"    class="btn"          disabled>Next ⏭</button>
+        <button id="btnShuffle" class="btn"          disabled>🔀 Random</button>
+      </div>
+    </div>
+    <!-- ────────────────────────────────────────────────────────────── -->
 
     <script src="./styles.js"></script>
     <script src="./main.js"></script>

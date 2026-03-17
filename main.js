@@ -26,7 +26,6 @@
 
   // ---------------------------
   // Screen Wake Lock
-  // Keep the screen on while media is playing (supported browsers only)
   // ---------------------------
   let wakeLock = null;
 
@@ -43,11 +42,72 @@
     finally { wakeLock = null; }
   }
 
-  // Re-acquire the wake lock when the page becomes visible again during playback
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState === "visible" && !mediaEl.paused) {
       await acquireWakeLock();
     }
+  });
+
+  // ---------------------------
+  // Media Session API
+  // Enables Android notification controls, lock-screen controls,
+  // Bluetooth headset buttons, and car steering-wheel buttons.
+  // ---------------------------
+  function setupMediaSessionHandlers() {
+    if (!("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.setActionHandler("play", async () => {
+      await mediaEl.play();
+      await acquireWakeLock();
+      navigator.mediaSession.playbackState = "playing";
+    });
+
+    navigator.mediaSession.setActionHandler("pause", async () => {
+      mediaEl.pause();
+      await releaseWakeLock();
+      navigator.mediaSession.playbackState = "paused";
+    });
+
+    navigator.mediaSession.setActionHandler("previoustrack", () => prevTrack());
+    navigator.mediaSession.setActionHandler("nexttrack",     () => nextTrack());
+
+    // Seek support (shown as a scrubber in some Android / car UIs)
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime !== undefined) mediaEl.currentTime = details.seekTime;
+    });
+    navigator.mediaSession.setActionHandler("seekforward", (details) => {
+      mediaEl.currentTime = Math.min(
+        mediaEl.duration,
+        mediaEl.currentTime + (details.seekOffset ?? 10)
+      );
+    });
+    navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+      mediaEl.currentTime = Math.max(
+        0,
+        mediaEl.currentTime - (details.seekOffset ?? 10)
+      );
+    });
+  }
+
+  /** Update MediaSession metadata for the track that is about to play */
+  function setMediaSessionMetadata(track) {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  track.title ?? "Untitled",
+      artist: "Shenyin",
+      album:  getActivePlaylist()?.name ?? "",
+      // artwork omitted — add entries here if you ever store cover images
+    });
+  }
+
+  /** Keep the OS playback state indicator in sync */
+  mediaEl.addEventListener("play",  () => {
+    if ("mediaSession" in navigator)
+      navigator.mediaSession.playbackState = "playing";
+  });
+  mediaEl.addEventListener("pause", () => {
+    if ("mediaSession" in navigator)
+      navigator.mediaSession.playbackState = "paused";
   });
 
   // ---------------------------
@@ -65,10 +125,8 @@
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
         const d = req.result;
-        // playlists: { id, name, trackIds: string[], createdAt, updatedAt }
         if (!d.objectStoreNames.contains(STORES.playlists))
           d.createObjectStore(STORES.playlists, { keyPath: "id" });
-        // tracks: { id, title, blob, mime, createdAt, updatedAt }
         if (!d.objectStoreNames.contains(STORES.tracks))
           d.createObjectStore(STORES.tracks, { keyPath: "id" });
       };
@@ -117,7 +175,6 @@
   // ---------------------------
   // App state
   // ---------------------------
-  /** @type {{id:string, name:string, trackIds:string[], createdAt:number, updatedAt:number}[]} */
   let playlists        = [];
   let activePlaylistId = null;
   let currentIndex     = -1;
@@ -125,23 +182,20 @@
 
   // ---------------------------
   // Media file validation
-  // Accepts any file the browser might be able to play;
-  // actual playback errors are caught separately.
   // ---------------------------
   function isMediaFile(file) {
     const mime = file.type || "";
     if (mime.startsWith("audio/") || mime.startsWith("video/")) return true;
-    // Fallback: accept by common extension when MIME is missing
     return /\.(mp3|mp4|m4a|m4v|ogg|ogv|wav|flac|aac|webm|opus|mov|avi|mkv|3gp)$/i.test(file.name);
   }
 
   // ---------------------------
-  // Blob ↔ Base64 helpers (used for playlist export / import)
+  // Blob ↔ Base64 helpers
   // ---------------------------
   function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
-      r.onload  = () => resolve(r.result.split(",")[1]); // strip "data:<mime>;base64,"
+      r.onload  = () => resolve(r.result.split(",")[1]);
       r.onerror = () => reject(r.error);
       r.readAsDataURL(blob);
     });
@@ -157,7 +211,7 @@
   // ---------------------------
   // Seek bar & time display
   // ---------------------------
-  let isSeeking = false; // true while the user is dragging the thumb
+  let isSeeking = false;
 
   function formatTime(s) {
     if (!isFinite(s) || isNaN(s)) return "—";
@@ -174,6 +228,17 @@
     timeDisplay.textContent = isFinite(dur)
       ? `${formatTime(cur)} / ${formatTime(dur)}`
       : formatTime(cur);
+
+    // Keep MediaSession position state in sync (enables scrubber in car/OS UIs)
+    if ("mediaSession" in navigator && isFinite(dur) && dur > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration:     dur,
+          playbackRate: mediaEl.playbackRate,
+          position:     cur,
+        });
+      } catch { /* setPositionState not supported on all platforms */ }
+    }
   }
 
   function resetSeekBar() {
@@ -189,14 +254,12 @@
 
   mediaEl.addEventListener("timeupdate", updateSeekBar);
 
-  // Preview the target time while dragging (without actually seeking yet)
   seekBar.addEventListener("input", () => {
     isSeeking = true;
     const preview = (seekBar.value / 1000) * mediaEl.duration;
     timeDisplay.textContent = `${formatTime(preview)} / ${formatTime(mediaEl.duration)}`;
   });
 
-  // Commit the seek when the thumb is released
   seekBar.addEventListener("change", () => {
     if (isFinite(mediaEl.duration)) {
       mediaEl.currentTime = (seekBar.value / 1000) * mediaEl.duration;
@@ -204,7 +267,6 @@
     isSeeking = false;
   });
 
-  // Handle unplayable / broken media gracefully
   mediaEl.addEventListener("error", () => {
     const code = mediaEl.error?.code ?? "?";
     nowPlayingEl.textContent = `⚠️ Cannot play this file (error ${code})`;
@@ -289,18 +351,16 @@
       const item = document.createElement("div");
       item.className = `item ${p.id === activePlaylistId ? "item--active" : ""}`;
       item.style.cursor = "pointer";
-      // Tap anywhere on the row to select the playlist
       item.onclick = () => setActivePlaylist(p.id);
 
       const left = document.createElement("div");
       left.className = "item__left";
 
-      // Inline-editable playlist name — tap to rename
       const titleInput = document.createElement("input");
       titleInput.className = "inputTitle";
       titleInput.value = p.name;
       titleInput.title = "Tap to rename";
-      titleInput.onclick  = (e) => e.stopPropagation(); // don't trigger row selection
+      titleInput.onclick  = (e) => e.stopPropagation();
       titleInput.onkeydown = (e) => { if (e.key === "Enter") titleInput.blur(); };
       titleInput.onblur = async () => {
         const newName = titleInput.value.trim() || "Untitled";
@@ -321,14 +381,12 @@
       const actions = document.createElement("div");
       actions.className = "item__actions";
 
-      // Export this playlist as a JSON file
       const btnExport = document.createElement("button");
       btnExport.className = "iconbtn";
       btnExport.textContent = "📤";
       btnExport.title = "Export playlist";
       btnExport.onclick = (e) => { e.stopPropagation(); exportPlaylist(p.id); };
 
-      // Delete playlist and all its tracks
       const btnDel = document.createElement("button");
       btnDel.className = "iconbtn";
       btnDel.textContent = "🗑️";
@@ -347,7 +405,6 @@
     const p = getActivePlaylist();
     trackListEl.innerHTML = "";
 
-    // Preserve the now-playing label during playback
     if (mediaEl.paused) nowPlayingEl.textContent = "—";
 
     if (!p) {
@@ -379,7 +436,6 @@
       const left = document.createElement("div");
       left.className = "item__left";
 
-      // Editable track title — saved on blur / Enter
       const titleInput = document.createElement("input");
       titleInput.className = "inputTitle";
       titleInput.value = t.title ?? "Untitled";
@@ -389,7 +445,6 @@
         const newTitle = titleInput.value.trim() || "Untitled";
         if (newTitle === t.title) return;
         await idbPut(STORES.tracks, { ...t, title: newTitle, updatedAt: Date.now() });
-        // Reflect in the now-playing label if this track is active
         const ap = getActivePlaylist();
         if (ap && currentIndex === i && ap.trackIds[currentIndex] === trackId) {
           nowPlayingEl.textContent = `Playing: ${newTitle}`;
@@ -398,7 +453,6 @@
 
       const meta = document.createElement("div");
       meta.className = "item__meta";
-      // Show media type emoji based on mime
       const typeEmoji = (t.mime || "").startsWith("video/") ? "🎬" : "🎵";
       meta.textContent = `${typeEmoji} ${t.mime || "unknown"} · ${trackId.slice(0, 8)}…`;
 
@@ -422,14 +476,12 @@
       btnDown.disabled = i === p.trackIds.length - 1;
       btnDown.onclick = () => moveTrack(i, +1);
 
-      // Per-track play button
       const btnPlayThis = document.createElement("button");
       btnPlayThis.className = "btn btn--primary";
       btnPlayThis.textContent = "▶️";
       btnPlayThis.title = "Play this track";
       btnPlayThis.onclick = () => playIndex(i);
 
-      // Remove track from playlist and delete its blob from IndexedDB
       const btnDelTrack = document.createElement("button");
       btnDelTrack.className = "iconbtn";
       btnDelTrack.textContent = "🗑️";
@@ -452,7 +504,6 @@
   // ---------------------------
   async function loadPlaylists() {
     playlists = await idbGetAll(STORES.playlists);
-    // Most recently updated playlist first
     playlists.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
@@ -495,12 +546,11 @@
     const newTrackIds = [];
 
     for (const file of files) {
-      // Use the filename (without extension) as the default title
       const baseName = (file.name || "Untitled").replace(/\.[^/.]+$/, "");
       const track = {
         id:        uid("tr"),
         title:     baseName || "Untitled",
-        blob:      file,                      // File extends Blob — safe for IndexedDB
+        blob:      file,
         mime:      file.type || "application/octet-stream",
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -537,7 +587,6 @@
     await idbPut(STORES.playlists, updated);
     await loadPlaylists();
 
-    // Keep the playback cursor on the same track after the reorder
     if      (currentIndex === index)     currentIndex = nextIndex;
     else if (currentIndex === nextIndex) currentIndex = index;
 
@@ -545,7 +594,6 @@
     await renderTracks();
   }
 
-  /** Remove a single track from the active playlist and delete its blob */
   async function removeTrackFromPlaylist(trackIndex) {
     const p = getActivePlaylist();
     if (!p) return;
@@ -556,7 +604,6 @@
     await idbPut(STORES.playlists, { ...p, trackIds: newTrackIds, updatedAt: Date.now() });
     await idbDelete(STORES.tracks, trackId);
 
-    // Adjust or reset the playback cursor
     if (currentIndex === trackIndex) {
       await stopPlayback();
       currentIndex = -1;
@@ -570,7 +617,6 @@
     await refreshStorageInfo();
   }
 
-  /** Delete a whole playlist and every track blob it owns */
   async function deletePlaylist(playlistId) {
     const p = playlists.find(pl => pl.id === playlistId);
     if (!p) return;
@@ -593,10 +639,7 @@
 
   // ---------------------------
   // Playlist export / import
-  // Each track blob is serialised to Base64 so the JSON is self-contained.
-  // Warning: large playlists produce large files.
   // ---------------------------
-
   async function exportPlaylist(playlistId) {
     const p = playlists.find(pl => pl.id === playlistId);
     if (!p) return;
@@ -629,7 +672,6 @@
     } catch (err) {
       alert(`Export failed: ${err.message}`);
     } finally {
-      // Restore the now-playing label
       nowPlayingEl.textContent = mediaEl.paused ? "—" : nowPlayingEl.textContent;
     }
   }
@@ -695,10 +737,12 @@
     mediaEl.pause();
     mediaEl.removeAttribute("src");
     mediaEl.load();
-    mediaEl.classList.remove("visible"); // hide video viewport
+    mediaEl.classList.remove("visible");
     nowPlayingEl.textContent = "—";
     resetSeekBar();
     await releaseWakeLock();
+    if ("mediaSession" in navigator)
+      navigator.mediaSession.playbackState = "none";
   }
 
   async function playIndex(index) {
@@ -710,35 +754,35 @@
     const t = await idbGet(STORES.tracks, trackId);
     if (!t) return;
 
-    // Revoke the previous object URL to free memory
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(t.blob);
 
     mediaEl.src = currentObjectUrl;
 
-    // Show the video viewport only for video content
     const isVideo = (t.mime || "").startsWith("video/");
     mediaEl.classList.toggle("visible", isVideo);
 
     nowPlayingEl.textContent = `Playing: ${t.title ?? "Untitled"}`;
 
+    // ── Media Session: update metadata for this track ──────────────
+    setMediaSessionMetadata(t);
+
     try {
       await mediaEl.play();
       await acquireWakeLock();
-    } catch { /* autoplay blocked — user will trigger play manually */ }
+    } catch { /* autoplay blocked */ }
   }
 
   async function playCurrentOrFirst() {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
 
-    // Resume a paused track without restarting it
     if (currentIndex >= 0 && mediaEl.src && mediaEl.paused) {
       try {
         await mediaEl.play();
         await acquireWakeLock();
         return;
-      } catch { /* fall through to full playIndex */ }
+      } catch { /* fall through */ }
     }
 
     if (currentIndex < 0) currentIndex = 0;
@@ -759,7 +803,7 @@
     if (!p || p.trackIds.length === 0) return;
 
     const next = currentIndex < 0 ? 0 : currentIndex + 1;
-    if (next >= p.trackIds.length) return; // end of playlist — intentional stop
+    if (next >= p.trackIds.length) return;
     await playIndex(next);
   }
 
@@ -771,7 +815,6 @@
     await playIndex(prev);
   }
 
-  /** Pick a random track, always different from the currently playing one */
   async function shuffleTrack() {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
@@ -791,10 +834,10 @@
 
   fileInput.addEventListener("change", async () => {
     const files = Array.from(fileInput.files || []);
-    fileInput.value = ""; // reset so the same file can be re-added
+    fileInput.value = "";
     if (files.length === 0) return;
 
-    const media = files.filter(isMediaFile);
+    const media   = files.filter(isMediaFile);
     const skipped = files.length - media.length;
 
     if (media.length === 0) {
@@ -820,14 +863,12 @@
   btnPrev.addEventListener("click",    prevTrack);
   btnShuffle.addEventListener("click", shuffleTrack);
 
-  // Auto-advance to the next track when the current one ends
   mediaEl.addEventListener("ended", async () => {
     const p = getActivePlaylist();
     if (!p) return;
     if (currentIndex + 1 < p.trackIds.length) await playIndex(currentIndex + 1);
   });
 
-  // Clean up the object URL when the page is unloaded
   window.addEventListener("beforeunload", () => {
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   });
@@ -840,10 +881,12 @@
     await loadPlaylists();
     renderPlaylists();
 
-    // Auto-select the most recently updated playlist on startup
     if (playlists.length > 0) activePlaylistId = playlists[0].id;
 
     await renderTracks();
     await refreshStorageInfo();
+
+    // Register Media Session action handlers once at startup
+    setupMediaSessionHandlers();
   })();
 })();

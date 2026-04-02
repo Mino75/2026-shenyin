@@ -114,6 +114,7 @@
   // IndexedDB — schema & helpers
   // ---------------------------
   const DB_NAME    = "offline_playlist_player";
+  const LAST_STATE_KEY = "offline_player_last_state";
   const DB_VERSION = 1;
   const STORES     = { playlists: "playlists", tracks: "tracks" };
 
@@ -290,6 +291,32 @@
     return `${prefix}_${crypto.randomUUID()}`;
   }
 
+  function saveLastPlaybackState() {
+    try {
+      const p = getActivePlaylist();
+      const trackId =
+        p && currentIndex >= 0 && currentIndex < p.trackIds.length
+          ? p.trackIds[currentIndex]
+          : null;
+  
+      localStorage.setItem(LAST_STATE_KEY, JSON.stringify({
+        activePlaylistId,
+        trackId,
+      }));
+    } catch {
+      /* ignore persistence errors */
+    }
+  }
+  
+  function clearLastPlaybackState() {
+    try {
+      localStorage.removeItem(LAST_STATE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  
   function clamp(n, min, max) {
     return Math.max(min, Math.min(max, n));
   }
@@ -405,7 +432,7 @@
     const p = getActivePlaylist();
     trackListEl.innerHTML = "";
 
-    if (mediaEl.paused) nowPlayingEl.textContent = "—";
+    if (mediaEl.paused && currentIndex < 0) nowPlayingEl.textContent = "—";
 
     if (!p) {
       activePlaylistBadge.textContent = "No playlist";
@@ -535,6 +562,7 @@
     currentIndex     = -1;
     await stopPlayback();
 
+    saveLastPlaybackState();
     renderPlaylists();
     await renderTracks();
   }
@@ -604,6 +632,16 @@
     await idbPut(STORES.playlists, { ...p, trackIds: newTrackIds, updatedAt: Date.now() });
     await idbDelete(STORES.tracks, trackId);
 
+    try {
+        const raw = localStorage.getItem(LAST_STATE_KEY);
+        if (raw) {
+          const last = JSON.parse(raw);
+          if (last?.trackId === trackId) clearLastPlaybackState();
+        }
+      } catch {
+        clearLastPlaybackState();
+        }
+    
     if (currentIndex === trackIndex) {
       await stopPlayback();
       currentIndex = -1;
@@ -625,6 +663,17 @@
     for (const trackId of p.trackIds) await idbDelete(STORES.tracks, trackId);
     await idbDelete(STORES.playlists, playlistId);
 
+    try {
+          const raw = localStorage.getItem(LAST_STATE_KEY);
+          if (raw) {
+            const last = JSON.parse(raw);
+            if (last?.activePlaylistId === playlistId) clearLastPlaybackState();
+          }
+        } catch {
+          clearLastPlaybackState();
+        }
+
+    
     if (activePlaylistId === playlistId) {
       activePlaylistId = null;
       currentIndex     = -1;
@@ -752,7 +801,12 @@
     currentIndex = clamp(index, 0, p.trackIds.length - 1);
     const trackId = p.trackIds[currentIndex];
     const t = await idbGet(STORES.tracks, trackId);
-    if (!t) return;
+    if (!t) {
+      clearLastPlaybackState();
+      currentIndex = -1;
+      nowPlayingEl.textContent = "—";
+      return;
+    }
 
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(t.blob);
@@ -763,7 +817,7 @@
     mediaEl.classList.toggle("visible", isVideo);
 
     nowPlayingEl.textContent = `Playing: ${t.title ?? "Untitled"}`;
-
+    saveLastPlaybackState();
     // ── Media Session: update metadata for this track ──────────────
     setMediaSessionMetadata(t);
 
@@ -901,13 +955,66 @@ async function prevTrack() {
   // ---------------------------
   // Boot
   // ---------------------------
+    async function restoreLastPlaybackState() {
+    try {
+      const raw = localStorage.getItem(LAST_STATE_KEY);
+      if (!raw) return false;
+  
+      const last = JSON.parse(raw);
+      if (!last?.activePlaylistId) {
+        clearLastPlaybackState();
+        return false;
+      }
+  
+      const p = playlists.find(pl => pl.id === last.activePlaylistId);
+      if (!p) {
+        clearLastPlaybackState();
+        return false;
+      }
+  
+      activePlaylistId = p.id;
+  
+      if (!last.trackId) {
+        currentIndex = -1;
+        return true;
+      }
+  
+      const idx = p.trackIds.indexOf(last.trackId);
+      if (idx === -1) {
+        clearLastPlaybackState();
+        currentIndex = -1;
+        return true;
+      }
+  
+      const t = await idbGet(STORES.tracks, last.trackId);
+      if (!t) {
+        clearLastPlaybackState();
+        currentIndex = -1;
+        return true;
+      }
+  
+      currentIndex = idx;
+      nowPlayingEl.textContent = `Ready: ${t.title ?? "Untitled"}`;
+      return true;
+    } catch {
+      clearLastPlaybackState();
+      currentIndex = -1;
+      return false;
+    }
+  }
+
+
+  
   (async function init() {
     db = await openDB();
     await loadPlaylists();
     renderPlaylists();
 
-    if (playlists.length > 0) activePlaylistId = playlists[0].id;
-
+    const restored = await restoreLastPlaybackState();
+    if (!restored && playlists.length > 0) {
+      activePlaylistId = playlists[0].id;
+    }
+    
     await renderTracks();
     await refreshStorageInfo();
 

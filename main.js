@@ -179,7 +179,7 @@
   let activePlaylistId = null;
   let currentIndex     = -1;
   let currentObjectUrl = null;
-
+  let isShuffleActive = false;
   // ---------------------------
   // Media file validation
   // ---------------------------
@@ -798,33 +798,50 @@
     }
   }
 
-  async function nextTrack() {
-    const p = getActivePlaylist();
-    if (!p || p.trackIds.length === 0) return;
+function getRandomTrackIndex(excludeIndex = -1) {
+  const p = getActivePlaylist();
+  if (!p || p.trackIds.length === 0) return -1;
+  if (p.trackIds.length === 1) return 0;
 
-    const next = currentIndex < 0 ? 0 : currentIndex + 1;
-    if (next >= p.trackIds.length) return;
-    await playIndex(next);
+  let idx;
+  do {
+    idx = Math.floor(Math.random() * p.trackIds.length);
+  } while (idx === excludeIndex);
+
+  return idx;
+}
+  
+async function nextTrack() {
+  const p = getActivePlaylist();
+  if (!p || p.trackIds.length === 0) return;
+
+  if (isShuffleActive) {
+    await playIndex(getRandomTrackIndex(currentIndex));
+    return;
   }
 
-  async function prevTrack() {
-    const p = getActivePlaylist();
-    if (!p || p.trackIds.length === 0) return;
+  const next = currentIndex < 0 ? 0 : currentIndex + 1;
+  if (next >= p.trackIds.length) return;
+  await playIndex(next);
+}
 
-    const prev = currentIndex <= 0 ? 0 : currentIndex - 1;
-    await playIndex(prev);
+async function prevTrack() {
+  const p = getActivePlaylist();
+  if (!p || p.trackIds.length === 0) return;
+
+  if (isShuffleActive) {
+    await playIndex(getRandomTrackIndex(currentIndex));
+    return;
   }
 
-  async function shuffleTrack() {
-    const p = getActivePlaylist();
-    if (!p || p.trackIds.length === 0) return;
-    if (p.trackIds.length === 1) { await playIndex(0); return; }
+  const prev = currentIndex <= 0 ? 0 : currentIndex - 1;
+  await playIndex(prev);
+}
 
-    let idx;
-    do { idx = Math.floor(Math.random() * p.trackIds.length); }
-    while (idx === currentIndex);
-
-    await playIndex(idx);
+  function shuffleTrack() {
+    isShuffleActive = !isShuffleActive;
+    btnShuffle.classList.toggle("active", isShuffleActive);
+    btnShuffle.setAttribute("aria-pressed", String(isShuffleActive));
   }
 
   // ---------------------------
@@ -865,8 +882,16 @@
 
   mediaEl.addEventListener("ended", async () => {
     const p = getActivePlaylist();
-    if (!p) return;
-    if (currentIndex + 1 < p.trackIds.length) await playIndex(currentIndex + 1);
+    if (!p || p.trackIds.length === 0) return;
+  
+    if (isShuffleActive) {
+      await playIndex(getRandomTrackIndex(currentIndex));
+      return;
+    }
+  
+    if (currentIndex + 1 < p.trackIds.length) {
+      await playIndex(currentIndex + 1);
+    }
   });
 
   window.addEventListener("beforeunload", () => {

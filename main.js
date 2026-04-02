@@ -896,6 +896,7 @@ async function prevTrack() {
     isShuffleActive = !isShuffleActive;
     btnShuffle.classList.toggle("active", isShuffleActive);
     btnShuffle.setAttribute("aria-pressed", String(isShuffleActive));
+    btnShuffle.textContent = isShuffleActive ? "🔀 Random ON" : "🔀 Random OFF";
   }
 
   // ---------------------------

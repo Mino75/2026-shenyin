@@ -188,6 +188,12 @@ body {
 .btn--primary:hover { background: rgba(124,92,255,.26); }
 .btn--ghost { background: transparent; }
 
+#btnShuffle.active {
+  border-color: rgba(124,92,255,.55);
+  background: rgba(124,92,255,.26);
+  box-shadow: 0 0 0 3px rgba(124,92,255,.14);
+}
+
 /* ── Badge ── */
 .badge {
   font-family: var(--mono);

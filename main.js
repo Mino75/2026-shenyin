@@ -2,6 +2,11 @@
 (() => {
   "use strict";
 
+  const KARAOKE_ORIGIN = "https://karaoke.hongkoala.com";
+  const MESSAGE_TYPE_TRACK_CHANGE = "karaoke-track-change";
+  const MESSAGE_TYPE_PLAYBACK_STATE = "karaoke-playback-state";
+
+  
   // ---------------------------
   // DOM references
   // ---------------------------
@@ -104,12 +109,63 @@
   mediaEl.addEventListener("play",  () => {
     if ("mediaSession" in navigator)
       navigator.mediaSession.playbackState = "playing";
+   emitPlaybackState();
   });
   mediaEl.addEventListener("pause", () => {
     if ("mediaSession" in navigator)
       navigator.mediaSession.playbackState = "paused";
+    emitPlaybackState(); 
   });
 
+
+//Karaoke
+
+  function emitToKaraoke(type, payload = {}) {
+    if (!window.parent || window.parent === window) return;
+
+    window.parent.postMessage(
+      {
+        type,
+        payload,
+        sourceApp: "shenyin",
+        emittedAt: Date.now(),
+      },
+      KARAOKE_ORIGIN
+    );
+  }
+
+  function emitCurrentTrack(reason = "update") {
+    const p = getActivePlaylist();
+    if (!p || currentIndex < 0 || currentIndex >= p.trackIds.length) return;
+
+    const trackId = p.trackIds[currentIndex];
+
+    emitToKaraoke(MESSAGE_TYPE_TRACK_CHANGE, {
+      trackId,
+      title: nowPlayingEl.textContent?.replace(/^Playing:\s*/, "") || "Untitled",
+      duration: Number.isFinite(mediaEl.duration) ? Math.round(mediaEl.duration) : 0,
+      currentTime: Number.isFinite(mediaEl.currentTime) ? Math.round(mediaEl.currentTime) : 0,
+      state: mediaEl.paused ? "paused" : "playing",
+      reason,
+    });
+  }
+
+  function emitPlaybackState() {
+    const p = getActivePlaylist();
+    const trackId =
+      p && currentIndex >= 0 && currentIndex < p.trackIds.length
+        ? p.trackIds[currentIndex]
+        : null;
+
+    emitToKaraoke(MESSAGE_TYPE_PLAYBACK_STATE, {
+      trackId,
+      currentTime: Number.isFinite(mediaEl.currentTime) ? Math.round(mediaEl.currentTime) : 0,
+      duration: Number.isFinite(mediaEl.duration) ? Math.round(mediaEl.duration) : 0,
+      state: mediaEl.paused ? "paused" : "playing",
+    });
+  }
+
+  
   // ---------------------------
   // IndexedDB — schema & helpers
   // ---------------------------
@@ -251,6 +307,7 @@
   mediaEl.addEventListener("loadedmetadata", () => {
     seekBar.disabled = false;
     updateSeekBar();
+    emitCurrentTrack("metadata-loaded");
   });
 
   mediaEl.addEventListener("timeupdate", updateSeekBar);
@@ -266,6 +323,7 @@
       mediaEl.currentTime = (seekBar.value / 1000) * mediaEl.duration;
     }
     isSeeking = false;
+    emitPlaybackState();
   });
 
   mediaEl.addEventListener("error", () => {
@@ -820,10 +878,12 @@
     saveLastPlaybackState();
     // ── Media Session: update metadata for this track ──────────────
     setMediaSessionMetadata(t);
+    emitCurrentTrack("track-selected");
 
     try {
       await mediaEl.play();
       await acquireWakeLock();
+      emitCurrentTrack("play-started");
     } catch { /* autoplay blocked */ }
   }
 
@@ -953,6 +1013,13 @@ async function prevTrack() {
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   });
 
+  setInterval(() => {
+    if (!mediaEl.paused && mediaEl.src) {
+      emitPlaybackState();
+    }
+  }, 1500);
+
+  
   // ---------------------------
   // Boot
   // ---------------------------

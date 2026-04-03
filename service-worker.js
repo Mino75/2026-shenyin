@@ -81,8 +81,6 @@ const ASSETS = [
   '/main.js',
   '/styles.js',
   '/manifest.json',
-  '/context.js',
-  '/chart.umd.min.js',
   '/icon-512.png',
   '/icon-192.png',
   '/favicon.ico'

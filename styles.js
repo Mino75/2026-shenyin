@@ -268,6 +268,41 @@ body {
   background: rgba(0,0,0,.18);
 }
 
+.karaoke-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+.karaoke-overlay.hidden {
+  display: none;
+}
+
+#karaokeFrame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.karaoke-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+}
+
 /* ── Empty state ── */
 .empty {
   margin-top: 12px;

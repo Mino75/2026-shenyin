@@ -6,6 +6,20 @@
   const MESSAGE_TYPE_TRACK_CHANGE = "karaoke-track-change";
   const MESSAGE_TYPE_PLAYBACK_STATE = "karaoke-playback-state";
 
+  const overlay = document.getElementById("karaokeOverlay");
+  const openBtn = document.getElementById("openKaraokeBtn");
+  const closeBtn = document.getElementById("closeKaraokeBtn");
+  
+  openBtn.addEventListener("click", () => {
+    overlay.classList.remove("hidden");
+    setTimeout(() => {
+      emitCurrentTrack("karaoke-open");
+    }, 300);
+  });
+  
+  closeBtn.addEventListener("click", () => {
+    overlay.classList.add("hidden");
+  });
   
   // ---------------------------
   // DOM references
@@ -120,19 +134,25 @@
 
 //Karaoke
 
-  function emitToKaraoke(type, payload = {}) {
-    if (!window.parent || window.parent === window) return;
+function getKaraokeFrameWindow() {
+  const frame = document.getElementById("karaokeFrame");
+  return frame?.contentWindow || null;
+}
 
-    window.parent.postMessage(
-      {
-        type,
-        payload,
-        sourceApp: "shenyin",
-        emittedAt: Date.now(),
-      },
-      KARAOKE_ORIGIN
-    );
-  }
+function emitToKaraoke(type, payload = {}) {
+  const target = getKaraokeFrameWindow();
+  if (!target) return;
+
+  target.postMessage(
+    {
+      type,
+      payload,
+      sourceApp: "shenyin",
+      emittedAt: Date.now(),
+    },
+    "https://karaoke.hongkoala.com"
+  );
+}
 
   function emitCurrentTrack(reason = "update") {
     const p = getActivePlaylist();

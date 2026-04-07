@@ -369,6 +369,50 @@ function emitToKaraoke(type, payload = {}) {
     return `${prefix}_${crypto.randomUUID()}`;
   }
 
+  async function importTracksFromPlaylistFile(file) {
+    const p = getActivePlaylist();
+    if (!p) { alert("Sélectionne une playlist d'abord."); return; }
+  
+    nowPlayingEl.textContent = "⏳ Importing…";
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+  
+      if (data.version !== 1 || !Array.isArray(data.tracks)) {
+        alert("Fichier de playlist invalide.");
+        return;
+      }
+  
+      const newTrackIds = [];
+      for (const track of data.tracks) {
+        const blob  = base64ToBlob(track.data, track.mime);
+        const newId = uid("tr");
+        await idbPut(STORES.tracks, {
+          id: newId, title: track.title || "Untitled",
+          blob, mime: track.mime || "application/octet-stream",
+          createdAt: Date.now(), updatedAt: Date.now(),
+        });
+        newTrackIds.push(newId);
+      }
+  
+      await idbPut(STORES.playlists, {
+        ...p,
+        trackIds:  [...p.trackIds, ...newTrackIds],
+        updatedAt: Date.now(),
+      });
+  
+      await loadPlaylists();
+      renderPlaylists();
+      await renderTracks();
+      await refreshStorageInfo();
+    } catch (err) {
+      alert(`Import échoué : ${err.message}`);
+    } finally {
+      nowPlayingEl.textContent = mediaEl.paused ? "—" : nowPlayingEl.textContent;
+    }
+  }
+
+  
   function saveLastPlaybackState() {
     try {
       const p = getActivePlaylist();
@@ -988,20 +1032,20 @@ async function prevTrack() {
     const files = Array.from(fileInput.files || []);
     fileInput.value = "";
     if (files.length === 0) return;
-
-    const media   = files.filter(isMediaFile);
-    const skipped = files.length - media.length;
-
-    if (media.length === 0) {
-      alert("No recognisable media files found in the selection.");
-      return;
+  
+    // Séparer json et media
+    const jsonFiles  = files.filter(f => f.name.endsWith(".json"));
+    const mediaFiles = files.filter(f => !f.name.endsWith(".json") && isMediaFile(f));
+    const skipped    = files.length - jsonFiles.length - mediaFiles.length;
+  
+    for (const jsonFile of jsonFiles) {
+      await importTracksFromPlaylistFile(jsonFile); // nouvelle fonction
     }
-    if (skipped > 0) {
-      alert(`${skipped} file(s) were skipped (unrecognised format). ${media.length} added.`);
-    }
-
-    await importFilesToActivePlaylist(media);
+  
+    if (mediaFiles.length > 0) await importFilesToActivePlaylist(mediaFiles);
+    if (skipped > 0) alert(`${skipped} fichier(s) ignoré(s) (format non reconnu).`);
   });
+
 
   importPlaylistInput.addEventListener("change", async () => {
     const file = importPlaylistInput.files?.[0];

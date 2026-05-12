@@ -1083,6 +1083,33 @@ async function prevTrack() {
     }
   }, 1500);
 
+//Iframe remote control
+
+  window.addEventListener("message", async (event) => {
+    const msg = event.data || {};
+    const action = msg.action || msg.type;
+
+    switch (action) {
+      case "play":
+        await togglePlayPause();
+        break;
+
+      case "next":
+        await nextTrack();
+        break;
+
+      case "previous":
+      case "prev":
+        await prevTrack();
+        break;
+
+      case "random":
+      case "shuffle":
+        await playIndex(getRandomTrackIndex(currentIndex));
+        break;
+    }
+  });
+
   
   // ---------------------------
   // Boot

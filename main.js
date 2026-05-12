@@ -330,7 +330,10 @@ function emitToKaraoke(type, payload = {}) {
     emitCurrentTrack("metadata-loaded");
   });
 
-  mediaEl.addEventListener("timeupdate", updateSeekBar);
+  mediaEl.addEventListener("timeupdate", () => {
+    updateSeekBar();
+    saveLastPlaybackState();
+  });
 
   seekBar.addEventListener("input", () => {
     isSeeking = true;
@@ -343,6 +346,7 @@ function emitToKaraoke(type, payload = {}) {
       mediaEl.currentTime = (seekBar.value / 1000) * mediaEl.duration;
     }
     isSeeking = false;
+    saveLastPlaybackState();
     emitPlaybackState();
   });
 
@@ -424,6 +428,7 @@ function emitToKaraoke(type, payload = {}) {
       localStorage.setItem(LAST_STATE_KEY, JSON.stringify({
         activePlaylistId,
         trackId,
+        currentTime: Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
       }));
     } catch {
       /* ignore persistence errors */
@@ -916,7 +921,7 @@ function emitToKaraoke(type, payload = {}) {
       navigator.mediaSession.playbackState = "none";
   }
 
-  async function playIndex(index) {
+  async function playIndex(index, startTime = 0) {
     const p = getActivePlaylist();
     if (!p || p.trackIds.length === 0) return;
 
@@ -935,6 +940,18 @@ function emitToKaraoke(type, payload = {}) {
 
     mediaEl.src = currentObjectUrl;
 
+    mediaEl.addEventListener("loadedmetadata", () => {
+      if (
+        Number.isFinite(startTime) &&
+        startTime > 0 &&
+        Number.isFinite(mediaEl.duration) &&
+        startTime < mediaEl.duration
+      ) {
+        mediaEl.currentTime = startTime;
+      }
+    }, { once: true });
+    
+    
     const isVideo = (t.mime || "").startsWith("video/");
     mediaEl.classList.toggle("visible", isVideo);
 
@@ -951,21 +968,35 @@ function emitToKaraoke(type, payload = {}) {
     } catch { /* autoplay blocked */ }
   }
 
-  async function playCurrentOrFirst() {
-    const p = getActivePlaylist();
-    if (!p || p.trackIds.length === 0) return;
-
-    if (currentIndex >= 0 && mediaEl.src && mediaEl.paused) {
+    async function playCurrentOrFirst() {
+      const p = getActivePlaylist();
+      if (!p || p.trackIds.length === 0) return;
+    
+      if (currentIndex >= 0 && mediaEl.src && mediaEl.paused) {
+        try {
+          await mediaEl.play();
+          await acquireWakeLock();
+          return;
+        } catch { /* fall through */ }
+      }
+    
+      if (currentIndex < 0) currentIndex = 0;
+    
+      let startTime = 0;
+    
       try {
-        await mediaEl.play();
-        await acquireWakeLock();
-        return;
-      } catch { /* fall through */ }
+        const last = JSON.parse(localStorage.getItem(LAST_STATE_KEY) || "{}");
+        const trackId = p.trackIds[currentIndex];
+    
+        if (last?.activePlaylistId === activePlaylistId && last?.trackId === trackId) {
+          startTime = Number(last.currentTime ?? 0);
+        }
+      } catch {
+        startTime = 0;
+      }
+    
+      await playIndex(currentIndex, startTime);
     }
-
-    if (currentIndex < 0) currentIndex = 0;
-    await playIndex(currentIndex);
-  }
 
   async function togglePlayPause() {
     if (!mediaEl.paused) {
@@ -998,8 +1029,7 @@ async function nextTrack() {
     return;
   }
 
-  const next = currentIndex < 0 ? 0 : currentIndex + 1;
-  if (next >= p.trackIds.length) return;
+  const next = currentIndex < 0 ? 0 : (currentIndex + 1) % p.trackIds.length;
   await playIndex(next);
 }
 
@@ -1068,9 +1098,7 @@ async function prevTrack() {
       return;
     }
   
-    if (currentIndex + 1 < p.trackIds.length) {
-      await playIndex(currentIndex + 1);
-    }
+    await playIndex((currentIndex + 1) % p.trackIds.length);
   });
 
   window.addEventListener("beforeunload", () => {
@@ -1155,6 +1183,7 @@ async function prevTrack() {
       currentIndex = idx;
       nowPlayingEl.textContent = `Ready: ${t.title ?? "Untitled"}`;
       return true;
+      
     } catch {
       clearLastPlaybackState();
       currentIndex = -1;

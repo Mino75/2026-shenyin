@@ -630,6 +630,13 @@ function emitToKaraoke(type, payload = {}) {
       btnDown.disabled = i === p.trackIds.length - 1;
       btnDown.onclick = () => moveTrack(i, +1);
 
+      const btnCopyTrack = document.createElement("button");
+      btnCopyTrack.className = "iconbtn";
+      btnCopyTrack.textContent = "📋";
+      btnCopyTrack.title = "Copy to playlist";
+      btnCopyTrack.onclick = () => copyTrackToPlaylist(trackId);
+
+      
       const btnPlayThis = document.createElement("button");
       btnPlayThis.className = "btn btn--primary";
       btnPlayThis.textContent = "▶️";
@@ -644,6 +651,7 @@ function emitToKaraoke(type, payload = {}) {
 
       actions.appendChild(btnUp);
       actions.appendChild(btnDown);
+      actions.appendChild(btnCopyTrack);
       actions.appendChild(btnPlayThis);
       actions.appendChild(btnDelTrack);
 
@@ -727,6 +735,47 @@ function emitToKaraoke(type, payload = {}) {
     await refreshStorageInfo();
   }
 
+async function copyTrackToPlaylist(trackId) {
+  const sourceTrack = await idbGet(STORES.tracks, trackId);
+  if (!sourceTrack) return;
+
+  const choices = playlists
+    .map((p, i) => `${i + 1}. ${p.name}`)
+    .join("\n");
+
+  const raw = prompt(`Copy to playlist:\n\n${choices}`);
+  if (!raw) return;
+
+  const targetIndex = Number(raw) - 1;
+  const targetPlaylist = playlists[targetIndex];
+
+  if (!targetPlaylist) {
+    alert("Invalid playlist.");
+    return;
+  }
+
+  const newTrackId = uid("tr");
+
+  await idbPut(STORES.tracks, {
+    ...sourceTrack,
+    id: newTrackId,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  await idbPut(STORES.playlists, {
+    ...targetPlaylist,
+    trackIds: [...targetPlaylist.trackIds, newTrackId],
+    updatedAt: Date.now(),
+  });
+
+  await loadPlaylists();
+  renderPlaylists();
+  await renderTracks();
+  await refreshStorageInfo();
+}
+
+  
   async function moveTrack(index, delta) {
     const p = getActivePlaylist();
     if (!p) return;

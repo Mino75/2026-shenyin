@@ -740,11 +740,11 @@ async function copyTrackToPlaylist(trackId) {
   if (!sourceTrack) return;
 
   const dialog = document.createElement("dialog");
-  const select = document.createElement("select");
+  
 
   dialog.className = "panel";
   
-  select.className = "inputTitle";
+ 
   
   dialog.style.background = "var(--bg)";
   dialog.style.color = "var(--text)";
@@ -752,13 +752,34 @@ async function copyTrackToPlaylist(trackId) {
   dialog.style.borderRadius = "var(--radius)";
   dialog.style.padding = "var(--pad)";
   dialog.style.boxShadow = "var(--shadow)";
+
+
+  let selectedPlaylist = null;
+  
+  const list = document.createElement("div");
+  list.className = "list";
   
   for (const p of playlists) {
-    const option = document.createElement("option");
-    option.value = p.id;
-    option.textContent = p.name;
-    select.appendChild(option);
+    const row = document.createElement("div");
+  
+    row.className = "item";
+    row.style.cursor = "pointer";
+    row.textContent = p.name;
+  
+    row.onclick = () => {
+      selectedPlaylist = p;
+  
+      [...list.children].forEach(el =>
+        el.classList.remove("item--active")
+      );
+  
+      row.classList.add("item--active");
+    };
+  
+    list.appendChild(row);
   }
+  
+  dialog.appendChild(list);
 
   const btnCopy = document.createElement("button");
   btnCopy.className = "btn btn--primary";
@@ -768,7 +789,6 @@ async function copyTrackToPlaylist(trackId) {
   btnCancel.className = "btn";
   btnCancel.textContent = "Cancel";
 
-  dialog.appendChild(select);
   dialog.appendChild(btnCopy);
   dialog.appendChild(btnCancel);
   document.body.appendChild(dialog);
@@ -779,7 +799,7 @@ async function copyTrackToPlaylist(trackId) {
   };
 
   btnCopy.onclick = async () => {
-    const targetPlaylist = playlists.find(p => p.id === select.value);
+    const targetPlaylist = selectedPlaylist;
     if (!targetPlaylist) return;
 
     const newTrackId = uid("tr");

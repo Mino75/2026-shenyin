@@ -740,8 +740,19 @@ async function copyTrackToPlaylist(trackId) {
   if (!sourceTrack) return;
 
   const dialog = document.createElement("dialog");
-
   const select = document.createElement("select");
+
+  dialog.className = "panel";
+  
+  select.className = "inputTitle";
+  
+  dialog.style.background = "var(--panel)";
+  dialog.style.color = "var(--text)";
+  dialog.style.border = "1px solid var(--stroke)";
+  dialog.style.borderRadius = "var(--radius)";
+  dialog.style.padding = "var(--pad)";
+  dialog.style.boxShadow = "var(--shadow)";
+  
   for (const p of playlists) {
     const option = document.createElement("option");
     option.value = p.id;

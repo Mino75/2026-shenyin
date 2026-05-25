@@ -746,7 +746,7 @@ async function copyTrackToPlaylist(trackId) {
   
   select.className = "inputTitle";
   
-  dialog.style.background = "var(--panel)";
+  dialog.style.background = "var(--bg)";
   dialog.style.color = "var(--text)";
   dialog.style.border = "1px solid var(--stroke)";
   dialog.style.borderRadius = "var(--radius)";

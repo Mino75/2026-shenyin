@@ -739,42 +739,64 @@ async function copyTrackToPlaylist(trackId) {
   const sourceTrack = await idbGet(STORES.tracks, trackId);
   if (!sourceTrack) return;
 
-  const choices = playlists
-    .map((p, i) => `${i + 1}. ${p.name}`)
-    .join("\n");
+  const dialog = document.createElement("dialog");
 
-  const raw = prompt(`Copy to playlist:\n\n${choices}`);
-  if (!raw) return;
-
-  const targetIndex = Number(raw) - 1;
-  const targetPlaylist = playlists[targetIndex];
-
-  if (!targetPlaylist) {
-    alert("Invalid playlist.");
-    return;
+  const select = document.createElement("select");
+  for (const p of playlists) {
+    const option = document.createElement("option");
+    option.value = p.id;
+    option.textContent = p.name;
+    select.appendChild(option);
   }
 
-  const newTrackId = uid("tr");
+  const btnCopy = document.createElement("button");
+  btnCopy.className = "btn btn--primary";
+  btnCopy.textContent = "📋 Copy";
 
-  await idbPut(STORES.tracks, {
-    ...sourceTrack,
-    id: newTrackId,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
+  const btnCancel = document.createElement("button");
+  btnCancel.className = "btn";
+  btnCancel.textContent = "Cancel";
 
-  await idbPut(STORES.playlists, {
-    ...targetPlaylist,
-    trackIds: [...targetPlaylist.trackIds, newTrackId],
-    updatedAt: Date.now(),
-  });
+  dialog.appendChild(select);
+  dialog.appendChild(btnCopy);
+  dialog.appendChild(btnCancel);
+  document.body.appendChild(dialog);
 
-  await loadPlaylists();
-  renderPlaylists();
-  await renderTracks();
-  await refreshStorageInfo();
+  btnCancel.onclick = () => {
+    dialog.close();
+    dialog.remove();
+  };
+
+  btnCopy.onclick = async () => {
+    const targetPlaylist = playlists.find(p => p.id === select.value);
+    if (!targetPlaylist) return;
+
+    const newTrackId = uid("tr");
+
+    await idbPut(STORES.tracks, {
+      ...sourceTrack,
+      id: newTrackId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await idbPut(STORES.playlists, {
+      ...targetPlaylist,
+      trackIds: [...targetPlaylist.trackIds, newTrackId],
+      updatedAt: Date.now(),
+    });
+
+    dialog.close();
+    dialog.remove();
+
+    await loadPlaylists();
+    renderPlaylists();
+    await renderTracks();
+    await refreshStorageInfo();
+  };
+
+  dialog.showModal();
 }
-
   
   async function moveTrack(index, delta) {
     const p = getActivePlaylist();

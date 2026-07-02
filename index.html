@@ -77,11 +77,19 @@
         <div class="brand__dot"></div>
         <div class="brand__text">
           <div class="brand__title"> 声音 </div>
-          <div class="brand__subtitle">IndexedDB · Vanilla JS · Dark mode</div>
+          <div class="brand__subtitle">Audio Player</div>
         </div>
       </div>
       <div class="topbar__actions">
-        <button id="btnNewPlaylist" class="btn btn--primary">➕ New playlist</button>
+        <button id="btnNewPlaylist" class="btn btn--primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+               stroke="white" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/>
+            <path d="M5 12h14"/>
+          </svg>
+          New playlist
+        </button>
         <label class="btn" for="importPlaylistInput">📥 Import playlist</label>
         <input id="importPlaylistInput" type="file" accept=".json" hidden />
       </div>

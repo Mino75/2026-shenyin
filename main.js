@@ -434,7 +434,7 @@ function saveLastPlaybackState() {
       activePlaylistId,
       trackId,
       currentTime: Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
-      trackListScrollTop: trackListEl.scrollTop,
+      trackListScrollTop: window.scrollY,
     }));
   } catch {
     /* ignore persistence errors */
@@ -450,7 +450,7 @@ function restoreTrackListScroll() {
     const scrollTop = Number(last.trackListScrollTop ?? 0);
 
     requestAnimationFrame(() => {
-      trackListEl.scrollTop = scrollTop;
+      window.scrollTo(0, scrollTop);
     });
   } catch {
     /* ignore */
@@ -722,7 +722,7 @@ function restoreTrackListScroll() {
     saveLastPlaybackState();
     renderPlaylists();
     await renderTracks();
-    restoreTrackListScroll();
+    ;
   }
 
   async function importFilesToActivePlaylist(files) {
@@ -856,7 +856,7 @@ async function copyTrackToPlaylist(trackId) {
     const p = getActivePlaylist();
     if (!p) return;
 
-    const scrollTop = trackListEl.scrollTop;
+    const scrollTop = window.scrollY;
     
     const nextIndex = clamp(index + delta, 0, p.trackIds.length - 1);
     if (nextIndex === index) return;
@@ -875,10 +875,10 @@ async function copyTrackToPlaylist(trackId) {
     renderPlaylists();
     await renderTracks();
     requestAnimationFrame(() => {
-      trackListEl.scrollTop = scrollTop;
+      window.scrollTo(0, scrollTop);
     
       requestAnimationFrame(() => {
-        trackListEl.scrollTop = scrollTop;
+        window.scrollTo(0, scrollTop);
         saveLastPlaybackState();
       });
     });

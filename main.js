@@ -647,14 +647,22 @@ function saveLastPlaybackState() {
       btnUp.textContent = "↑";
       btnUp.title = "Move up";
       btnUp.disabled = i === 0;
-      btnUp.onclick = () => moveTrack(i, -1);
+      btnUp.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        moveTrack(i, -1);
+      };
 
       const btnDown = document.createElement("button");
       btnDown.className = "iconbtn";
       btnDown.textContent = "↓";
       btnDown.title = "Move down";
       btnDown.disabled = i === p.trackIds.length - 1;
-      btnDown.onclick = () => moveTrack(i, +1);
+      btnDown.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        moveTrack(i, +1);
+      };
 
       const btnCopyTrack = document.createElement("button");
       btnCopyTrack.className = "iconbtn";

@@ -874,8 +874,14 @@ async function copyTrackToPlaylist(trackId) {
 
     renderPlaylists();
     await renderTracks();
-    trackListEl.scrollTop = scrollTop;
-    saveLastPlaybackState();
+    requestAnimationFrame(() => {
+      trackListEl.scrollTop = scrollTop;
+    
+      requestAnimationFrame(() => {
+        trackListEl.scrollTop = scrollTop;
+        saveLastPlaybackState();
+      });
+    });
   }
 
   async function removeTrackFromPlaylist(trackIndex) {

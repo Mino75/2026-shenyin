@@ -61,11 +61,16 @@
     finally { wakeLock = null; }
   }
 
-  document.addEventListener("visibilitychange", async () => {
-    if (document.visibilityState === "visible" && !mediaEl.paused) {
-      await acquireWakeLock();
-    }
-  });
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") {
+    saveLastPlaybackState();
+    return;
+  }
+
+  if (document.visibilityState === "visible" && !mediaEl.paused) {
+    await acquireWakeLock();
+  }
+});
 
   // ---------------------------
   // Media Session API
@@ -417,23 +422,40 @@ function emitToKaraoke(type, payload = {}) {
   }
 
   
-  function saveLastPlaybackState() {
-    try {
-      const p = getActivePlaylist();
-      const trackId =
-        p && currentIndex >= 0 && currentIndex < p.trackIds.length
-          ? p.trackIds[currentIndex]
-          : null;
-  
-      localStorage.setItem(LAST_STATE_KEY, JSON.stringify({
-        activePlaylistId,
-        trackId,
-        currentTime: Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
-      }));
-    } catch {
-      /* ignore persistence errors */
-    }
+function saveLastPlaybackState() {
+  try {
+    const p = getActivePlaylist();
+    const trackId =
+      p && currentIndex >= 0 && currentIndex < p.trackIds.length
+        ? p.trackIds[currentIndex]
+        : null;
+
+    localStorage.setItem(LAST_STATE_KEY, JSON.stringify({
+      activePlaylistId,
+      trackId,
+      currentTime: Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
+      trackListScrollTop: trackListEl.scrollTop,
+    }));
+  } catch {
+    /* ignore persistence errors */
   }
+}
+
+function restoreTrackListScroll() {
+  try {
+    const raw = localStorage.getItem(LAST_STATE_KEY);
+    if (!raw) return;
+
+    const last = JSON.parse(raw);
+    const scrollTop = Number(last.trackListScrollTop ?? 0);
+
+    requestAnimationFrame(() => {
+      trackListEl.scrollTop = scrollTop;
+    });
+  } catch {
+    /* ignore */
+  }
+}
   
   function clearLastPlaybackState() {
     try {
@@ -700,6 +722,7 @@ function emitToKaraoke(type, payload = {}) {
     saveLastPlaybackState();
     renderPlaylists();
     await renderTracks();
+    restoreTrackListScroll();
   }
 
   async function importFilesToActivePlaylist(files) {
@@ -833,6 +856,8 @@ async function copyTrackToPlaylist(trackId) {
     const p = getActivePlaylist();
     if (!p) return;
 
+    const scrollTop = trackListEl.scrollTop;
+    
     const nextIndex = clamp(index + delta, 0, p.trackIds.length - 1);
     if (nextIndex === index) return;
 
@@ -849,6 +874,8 @@ async function copyTrackToPlaylist(trackId) {
 
     renderPlaylists();
     await renderTracks();
+    trackListEl.scrollTop = scrollTop;
+    saveLastPlaybackState();
   }
 
   async function removeTrackFromPlaylist(trackIndex) {
@@ -1204,6 +1231,9 @@ async function prevTrack() {
   });
 
   window.addEventListener("beforeunload", () => {
+
+    saveLastPlaybackState();
+    
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   });
 
@@ -1306,6 +1336,7 @@ async function prevTrack() {
     }
     
     await renderTracks();
+    restoreTrackListScroll();
     await refreshStorageInfo();
 
     // Register Media Session action handlers once at startup

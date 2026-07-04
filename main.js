@@ -262,6 +262,7 @@ function emitToKaraoke(type, payload = {}) {
   let currentIndex     = -1;
   let currentObjectUrl = null;
   let isShuffleActive = false;
+  let isReorderingTrack = false;
   // ---------------------------
   // Media file validation
   // ---------------------------
@@ -865,8 +866,13 @@ async function copyTrackToPlaylist(trackId) {
 }
   
   async function moveTrack(index, delta) {
-    const p = getActivePlaylist();
-    if (!p) return;
+    if (isReorderingTrack) return;
+    isReorderingTrack = true;
+
+    try {
+
+        const p = getActivePlaylist();
+        if (!p) return;
   
     const scrollTop = trackListEl.scrollTop || window.scrollY;
   
@@ -901,7 +907,10 @@ async function copyTrackToPlaylist(trackId) {
   
       saveLastPlaybackState();
     });
-  }
+    } finally {
+        isReorderingTrack = false;
+      }
+  }  
 
   async function removeTrackFromPlaylist(trackIndex) {
     const p = getActivePlaylist();

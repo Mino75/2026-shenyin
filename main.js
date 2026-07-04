@@ -434,28 +434,32 @@ function saveLastPlaybackState() {
       activePlaylistId,
       trackId,
       currentTime: Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0,
-      trackListScrollTop: window.scrollY,
+      trackListScrollTop: trackListEl.scrollTop || window.scrollY,
     }));
   } catch {
     /* ignore persistence errors */
   }
 }
 
-function restoreTrackListScroll() {
-  try {
-    const raw = localStorage.getItem(LAST_STATE_KEY);
-    if (!raw) return;
-
-    const last = JSON.parse(raw);
-    const scrollTop = Number(last.trackListScrollTop ?? 0);
-
-    requestAnimationFrame(() => {
-      window.scrollTo(0, scrollTop);
-    });
-  } catch {
-    /* ignore */
+  function restoreTrackListScroll() {
+    try {
+      const raw = localStorage.getItem(LAST_STATE_KEY);
+      if (!raw) return;
+  
+      const last = JSON.parse(raw);
+      const scrollTop = Number(last.trackListScrollTop ?? 0);
+  
+      requestAnimationFrame(() => {
+        if (trackListEl.scrollHeight > trackListEl.clientHeight) {
+          trackListEl.scrollTop = scrollTop;
+        } else {
+          window.scrollTo(0, scrollTop);
+        }
+      });
+    } catch {
+      /* ignore */
+    }
   }
-}
   
   function clearLastPlaybackState() {
     try {
@@ -855,32 +859,39 @@ async function copyTrackToPlaylist(trackId) {
   async function moveTrack(index, delta) {
     const p = getActivePlaylist();
     if (!p) return;
-
-    const scrollTop = window.scrollY;
-    
+  
+    const scrollTop = trackListEl.scrollTop || window.scrollY;
+  
     const nextIndex = clamp(index + delta, 0, p.trackIds.length - 1);
     if (nextIndex === index) return;
-
+  
     const ids = [...p.trackIds];
     const [moved] = ids.splice(index, 1);
     ids.splice(nextIndex, 0, moved);
-
-    const updated = { ...p, trackIds: ids, updatedAt: Date.now() };
+  
+    // Important: do NOT bump updatedAt for a simple track reorder.
+    // Otherwise loadPlaylists() resorting causes UI jumps.
+    const updated = { ...p, trackIds: ids };
+  
     await idbPut(STORES.playlists, updated);
-    await loadPlaylists();
-
-    if      (currentIndex === index)     currentIndex = nextIndex;
+  
+    // Update in-memory playlist directly instead of reloading + resorting everything.
+    const playlistIndex = playlists.findIndex(pl => pl.id === p.id);
+    if (playlistIndex !== -1) playlists[playlistIndex] = updated;
+  
+    if (currentIndex === index) currentIndex = nextIndex;
     else if (currentIndex === nextIndex) currentIndex = index;
-
-    renderPlaylists();
+  
     await renderTracks();
+  
     requestAnimationFrame(() => {
-      window.scrollTo(0, scrollTop);
-    
-      requestAnimationFrame(() => {
+      if (trackListEl.scrollHeight > trackListEl.clientHeight) {
+        trackListEl.scrollTop = scrollTop;
+      } else {
         window.scrollTo(0, scrollTop);
-        saveLastPlaybackState();
-      });
+      }
+  
+      saveLastPlaybackState();
     });
   }
 
